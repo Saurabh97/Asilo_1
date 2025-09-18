@@ -1,0 +1,19 @@
+seed: 42
+round_time_s: 3
+pheromone:
+  alpha_decay: 0.05
+  beta_gain: 1.0
+  share_threshold: 0.35
+capability_profiles:
+  fast: {local_batches: 40, k_peers: 3, delta: head,  max_bytes_round: 150000}
+  slow: {local_batches: 12, k_peers: 2, delta: proto, max_bytes_round:  40000}
+agents:
+  - {name: S02_wrist, host: 127.0.0.1, port: 9102, subject: S02, capability: slow}
+  - {name: S05_wrist, host: 127.0.0.1, port: 9105, subject: S05, capability: fast}
+  - {name: S07_wrist, host: 127.0.0.1, port: 9107, subject: S07, capability: slow}
+  - {name: S08_wrist, host: 127.0.0.1, port: 9108, subject: S08, capability: fast}
+  - {name: S11_wrist, host: 127.0.0.1, port: 9111, subject: S11, capability: slow}
+  - {name: S14_wrist, host: 127.0.0.1, port: 9114, subject: S14, capability: fast}
+paths:
+  wesad_dir: data/processed/WESAD_wrist
+model_id: wesad_v01
