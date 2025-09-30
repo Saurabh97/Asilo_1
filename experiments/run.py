@@ -1,82 +1,60 @@
-import os, sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-import yaml
-import asyncio
-import random
-import numpy as np
+# Asilo_1/experiments/run.py
+import os, sys, yaml, asyncio, signal
 from functools import partial
-
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from Asilo_1.core.pheromone import PheromoneConfig
-from Asilo_1.core.policies import CapabilityProfile
+from Asilo_1.core.capability import CapabilityProfile
+from Asilo_1.core.trigger import TriggerConfig
 from Asilo_1.agents.base_agent import Agent, AgentConfig
-from Asilo_1.agents.wesad_agent import WESADData
+from Asilo_1.fl.trainers.tabular_sklearn import make_trainer_for_subject
 
-async def launch_agent(entry, cfg, peers_map, pher_cfg, cap_profiles, model_id, wesad_dir):
-    name = entry['name']
-    host = entry['host']
-    port = int(entry['port'])
-    subject = entry['subject']
-    cap_name = entry['capability']
-    cap = cap_profiles[cap_name]
+async def launch_agent(a, caps, pherocfg, trigcfg, data_dir, peers):
+    capd = caps[a['capability']]
+    cap = CapabilityProfile(a['capability'], capd['width'], capd['local_batches'], capd['k_peers'], capd['max_bytes_round'])
+    cfg = AgentConfig(agent_id=a['id'], host=a['host'], port=a['port'], model_id=a['model_id'],
+    pheromone=pherocfg, capability=cap,
+    round_time_s=float(os.getenv('ROUND_TIME', 0.1)),
+    trigger=trigcfg, max_rounds=None, max_seconds=None)
+    trainer = make_trainer_for_subject(data_dir, a['id'])
+    ag = Agent(cfg, trainer, peers)  # ← pass peers here
+    try:
+        await ag.run_forever()
+    finally:
+        await ag.send_bye()
 
-    csv_path = os.path.join(wesad_dir, f"{subject}.csv")
-    data = WESADData(csv_path)
-    trainer = data.make_trainer()
-
-    acfg = AgentConfig(
-        agent_id=name,
-        host=host,
-        port=port,
-        model_id=model_id,
-        pheromone=pher_cfg,
-        capability=cap,
-        round_time_s=cfg['round_time_s'],
-    )
-
-    agent = Agent(acfg, trainer, peers_map)
-    await agent.run_forever()
-
-async def main(config_path: str):
-    with open(config_path, 'r') as f:
+async def main(cfg_path: str):
+    with open(cfg_path, 'r') as f:
         cfg = yaml.safe_load(f)
+    pherocfg = PheromoneConfig(**cfg['pheromone'])
+    trigcfg = TriggerConfig(**cfg['trigger'])
+    caps = cfg['capabilities']
+    data_dir = cfg['data_dir']
 
-    random.seed(cfg.get('seed', 42))
-    np.random.seed(cfg.get('seed', 42))
-
-    pher_cfg = PheromoneConfig(**cfg['pheromone'])
-
-    # Capability profiles
-    caps = cfg['capability_profiles']
-    cap_profiles = {
-        k: CapabilityProfile(**v) for k, v in caps.items()
-    }
-
-    model_id = cfg.get('model_id', 'wesad_v01')
-    wesad_dir = cfg['paths']['wesad_dir']
-
-    # Build peers map (each agent sees others as peers)
     agents = cfg['agents']
-    peers_map_global = {}
-    for a in agents:
-        peers_map_global[a['name']] = (a['host'], int(a['port']))
+    # choose the first agent as the seed
+    seed = agents[0]
+    seed_id, seed_host, seed_port = seed['id'], seed['host'], seed['port']
 
     tasks = []
     for a in agents:
-        peers_excluding_self = {k: v for k, v in peers_map_global.items() if k != a['name']}
-        coro = launch_agent(a, cfg, peers_excluding_self, pher_cfg, cap_profiles, model_id, wesad_dir)
-        tasks.append(asyncio.create_task(coro))
+        # seed has no bootstrap; others know only the seed
+        if a['id'] == seed_id:
+            peers = {}
+        else:
+            peers = {seed_id: (seed_host, seed_port)}
+        tasks.append(asyncio.create_task(launch_agent(a, caps, pherocfg, trigcfg, data_dir, peers)))
 
-    await asyncio.gather(*tasks)
+    try:
+        await asyncio.gather(*tasks)
+    except KeyboardInterrupt:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python experiments/run.py experiments/configs/wesad_case.yaml")
-        sys.exit(1)
-    path = sys.argv[1]
-    try:
-        import uvloop  # optional
-        uvloop.install()
-    except Exception:
-        pass
-    asyncio.run(main(path))
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('cfg', nargs='?', default='Asilo_1/experiments/configs/wesad_case.yaml')
+    args = ap.parse_args()
+    asyncio.run(main(args.cfg))
