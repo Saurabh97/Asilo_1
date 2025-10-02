@@ -1,6 +1,22 @@
 seed: 42
 round_time_s: 0.1
-max_rounds: 200
+
+ttl_seconds: 35          # ↑ was implicit 20; reduce spurious timeouts
+u_eps: 0.0001            # ↓ clamp threshold so small gains are not zeroed
+speak_gate_factor: 0.75  # ↓ was effectively 0.90; makes speaking easier
+artifact_order: ["head", "proto"]  # prefer heads to test stronger transfer
+head_every: 10           # send head every 10 rounds, otherwise proto
+
+run_limits:
+  max_rounds: 200
+  max_seconds: 600
+
+robust:
+  cos_gate_thresh: 0.2
+  agg_mode: "median"      # robust by default
+  trim_p: 0.1
+  aggregate_every: 5
+  rollback_tol: 0.005
 
 pheromone:
   rho: 0.03
@@ -16,20 +32,19 @@ trigger:
   theta_high: 0.90
   theta_low: 0.78
   cooldown_s: 6.0
-  bucket_capacity: 40_000
-  bucket_refill_per_s: 4_000
+  bucket_capacity: 40000
+  bucket_refill_per_s: 4000
 
 capabilities:
-  FAST: {width: 1.0,  local_batches: 8, k_peers: 3, max_bytes_round: 200000}
-  SLOW: {width: 0.5,  local_batches: 4, k_peers: 2, max_bytes_round: 60000}
+  FAST: { width: 1.0, local_batches: 8, k_peers: 4, max_bytes_round: 200000 }  # k_peers +1
+  SLOW: { width: 0.5, local_batches: 5, k_peers: 3, max_bytes_round: 60000 }   # +1 batch/+1 peer
 
 agents:
-  - {id: S02, host: 127.0.0.1, port: 9002, model_id: wear, capability: SLOW}
-  - {id: S05, host: 127.0.0.1, port: 9005, model_id: wear, capability: FAST}
-  - {id: S07, host: 127.0.0.1, port: 9007, model_id: wear, capability: SLOW}
-  - {id: S08, host: 127.0.0.1, port: 9008, model_id: wear, capability: FAST}
-  - {id: S11, host: 127.0.0.1, port: 9009, model_id: wear, capability: SLOW}
-  - {id: S12, host: 127.0.0.1, port: 9010, model_id: wear, capability: FAST}
+  - { id: S02, host: 127.0.0.1, port: 9002, model_id: wear, capability: SLOW }
+  - { id: S05, host: 127.0.0.1, port: 9005, model_id: wear, capability: FAST }
+  - { id: S07, host: 127.0.0.1, port: 9007, model_id: wear, capability: SLOW }
+  - { id: S08, host: 127.0.0.1, port: 9008, model_id: wear, capability: FAST }
+  - { id: S11, host: 127.0.0.1, port: 9009, model_id: wear, capability: SLOW }
+  - { id: S12, host: 127.0.0.1, port: 9010, model_id: wear, capability: FAST }
 
-# data dir expected by your trainer (per-subject CSVs)
 data_dir: Asilo_1/data/processed/WESAD_wrist
