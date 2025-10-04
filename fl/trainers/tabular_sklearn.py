@@ -60,6 +60,7 @@ class SkTabularTrainer(LocalTrainer):
         return {"f1_val": float(f1), "auprc": float(auprc), "psi": float(min(1.0, auprc*1.2))}
 
     def compute_utility(self, prev: Dict[str, float], curr: Dict[str, float]) -> float:
+        print(f"  prev: {prev}, curr: {curr}")
         return float(max(0.0, curr.get("auprc", 0.0) - prev.get("auprc", 0.0)) * 5.0)
 
     # NEW: satisfy ABC even if base_agent uses its own _build_payload

@@ -57,7 +57,7 @@ class Agent:
         self.t_round = 0
         self.bytes_sent = 0
         self.id = cfg.agent_id
-        self.monitor = CSVMonitor(cfg.agent_id)
+        self.monitor = CSVMonitor(cfg.agent_id, exp_name="asilo")
         self._p_local = self.cfg.pheromone.tau0  # running pheromone we broadcast
         self._t_start = time.time()
         self._last_eval = None
@@ -133,23 +133,44 @@ class Agent:
             self.phero.evaporate()
 
             # --- decide to speak ---
+            # --- decide to speak ---
             psi = curr_metrics.get("psi", u)  # allow richer utility if your trainer computes it
             peers = self.phero.choose_peers(1)
             best_peer_score = self.phero.score_of(peers[0]) if peers else 0.0
             factor = self.cfg.speak_gate_factor
-            if (self._p_local >= factor * (best_peer_score + 1e-6)) and (u > eps) and self.trigger.should_send(psi):
+
+            reason = None
+            if u <= eps:
+                reason = f"utility too small (u={u:.4f} ≤ eps={eps})"
+            elif not self.trigger.should_send(psi):
+                reason = f"trigger blocked (psi={psi:.3f})"
+            elif self._p_local < factor * (best_peer_score + 1e-6):
+                reason = f"pheromone gate failed (p_local={self._p_local:.4f}, best_peer={best_peer_score:.4f}, factor={factor})"
+
+            if reason:
+                print(f"[{self.id}] ✖ not sending this round → {reason}", flush=True)
+            else:
                 payload, size = self._build_payload()
                 total_send = size * self.cfg.capability.k_peers
                 if total_send <= self.cfg.capability.max_bytes_round:
                     await self._broadcast_delta(payload, size)
                     self.bytes_sent += total_send
                     self.trigger.on_send(total_send)
+                    print(f"[{self.id}] ✓ sending update (kind={payload.get('kind')} size={size} "
+                        f"to {self.cfg.capability.k_peers} peers)", flush=True)
+                else:
+                    print(f"[{self.id}] ✖ payload too large (size={size}, "
+                        f"limit={self.cfg.capability.max_bytes_round})", flush=True)
+
             
             # --- aggregate buffered heads every N rounds ---
             if (self.t_round % max(1, self.cfg.aggregate_every) == 0):
                 async with self._inbuf_lock:
                     batch = self._incoming_heads[:]
                     self._incoming_heads.clear()
+
+                agg_count = len(batch)
+                rolled_back = 0
 
                 if batch:
                     snap = self._snapshot_head()
@@ -173,6 +194,7 @@ class Agent:
                     # rollback if harmful
                     if post_eval.get("auprc", 0.0) + 1e-9 < pre_eval.get("auprc", 0.0) - self.cfg.rollback_tol:
                         self._restore_head(snap)
+                        rolled_back = 1
                         # penalize all senders for this batch (bytes still “wasted”)
                         for sid, _, bsz in batch:
                             self.phero.deposit(sid, 0.0, max(1, bsz), reputation_badness=1.0)
@@ -193,7 +215,7 @@ class Agent:
             if (self.t_round % 5) == 0:
                 await self._broadcast_pheromone(self._p_local)
             # --- log ---
-            self.monitor.log(self.t_round, self.bytes_sent, u, self.phero.get_self(), curr_metrics.get("f1_val", 0.0))
+            self.monitor.log(self.t_round, self.bytes_sent, u, self.phero.get_self(), curr_metrics.get("f1_val", 0.0), agg_count=agg_count, rollback=rolled_back)
 
             prev_metrics = curr_metrics
             self.t_round += 1

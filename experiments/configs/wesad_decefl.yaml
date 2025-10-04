@@ -1,0 +1,20 @@
+seed: 42
+round_time_s: 0.1
+
+run_limits:
+  max_rounds: 200
+  max_seconds: 600
+
+decefl:
+  k_peers: 3
+  agg_mode: "weighted"
+
+agents:
+  - { id: S02, host: 127.0.0.1, port: 9202, model_id: wear, is_server: true }
+  - { id: S05, host: 127.0.0.1, port: 9205, model_id: wear }
+  - { id: S07, host: 127.0.0.1, port: 9207, model_id: wear }
+  - { id: S08, host: 127.0.0.1, port: 9208, model_id: wear }
+  - { id: S11, host: 127.0.0.1, port: 9209, model_id: wear }
+  - { id: S12, host: 127.0.0.1, port: 9210, model_id: wear }
+
+data_dir: Asilo_1/data/processed/WESAD_wrist

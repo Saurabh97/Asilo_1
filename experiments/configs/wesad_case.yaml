@@ -1,11 +1,11 @@
 seed: 42
 round_time_s: 0.1
 
-ttl_seconds: 35          # ↑ was implicit 20; reduce spurious timeouts
-u_eps: 0.0001            # ↓ clamp threshold so small gains are not zeroed
-speak_gate_factor: 0.75  # ↓ was effectively 0.90; makes speaking easier
-artifact_order: ["head", "proto"]  # prefer heads to test stronger transfer
-head_every: 10           # send head every 10 rounds, otherwise proto
+ttl_seconds: 35
+u_eps: 0.0025                  # ↑ raise threshold, filter micro-updates
+speak_gate_factor: 1.25        # ↑ require stronger advantage before speaking
+artifact_order: ["head", "proto"]
+head_every: 10
 
 run_limits:
   max_rounds: 200
@@ -13,18 +13,18 @@ run_limits:
 
 robust:
   cos_gate_thresh: 0.2
-  agg_mode: "median"      # robust by default
-  trim_p: 0.1
+  agg_mode: "trimmed"          # ↑ more stable than median for your case
+  trim_p: 0.10
   aggregate_every: 5
-  rollback_tol: 0.005
+  rollback_tol: 0.002          # ↑ tighter rollback tolerance
 
 pheromone:
-  rho: 0.03
+  rho: 0.005                   # ↓ slower evaporation (was 0.03)
   eta: 1.0
   tau0: 0.01
   temp: 0.5
   eps_greedy: 0.05
-  u_max: 0.2
+  u_max: 0.05                  # ↓ cap reward scale
   beta_ucb: 0.3
   reputation_kappa: 0.5
 
@@ -36,8 +36,8 @@ trigger:
   bucket_refill_per_s: 4000
 
 capabilities:
-  FAST: { width: 1.0, local_batches: 8, k_peers: 4, max_bytes_round: 200000 }  # k_peers +1
-  SLOW: { width: 0.5, local_batches: 5, k_peers: 3, max_bytes_round: 60000 }   # +1 batch/+1 peer
+  FAST: { width: 1.0, local_batches: 10, k_peers: 1, max_bytes_round: 65536 }   # tuned
+  SLOW: { width: 0.5, local_batches: 6,  k_peers: 1, max_bytes_round: 65536 }   # tuned
 
 agents:
   - { id: S02, host: 127.0.0.1, port: 9002, model_id: wear, capability: SLOW }

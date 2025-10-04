@@ -35,6 +35,7 @@ class Trigger:
         self.last_send = 0.0
         self.active = False
         self.bucket = TokenBucket(cfg.bucket_capacity, cfg.bucket_refill_per_s)
+        self.cooldown_s = cfg.cooldown_s
     def should_send(self, psi: float) -> bool:
         now = time.time()
         # hysteresis

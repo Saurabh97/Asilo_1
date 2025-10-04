@@ -9,8 +9,7 @@ from Asilo_1.core.trigger import TriggerConfig
 from Asilo_1.agents.base_agent import Agent, AgentConfig
 from Asilo_1.fl.trainers.tabular_sklearn import make_trainer_for_subject
 
-async def launch_agent(a, caps, pherocfg, trigcfg, data_dir, peers,
-                       global_robust, global_limits, global_misc):
+async def launch_agent(a, caps, pherocfg, trigcfg, data_dir, peers, global_robust, global_limits, global_misc):
     capd = caps[a['capability']]
     cap = CapabilityProfile(a['capability'], capd['width'], capd['local_batches'],
                             capd['k_peers'], capd['max_bytes_round'])
