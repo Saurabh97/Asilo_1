@@ -27,9 +27,9 @@ async def run_fedavg():
     trainer2 = make_trainer_for_subject(DATA_DIR, SUBJECTS[1])
 
     cfg_server = FedAvgConfig(agent_id=SUBJECTS[0], host="127.0.0.1", port=9500,
-                              model_id="wear", max_rounds=5, is_server=True)
+                            model_id="wear", max_rounds=5, is_server=True)
     cfg_client = FedAvgConfig(agent_id=SUBJECTS[1], host="127.0.0.1", port=9501,
-                              model_id="wear", max_rounds=5, is_server=False)
+                            model_id="wear", max_rounds=5, is_server=False)
 
     peers_client = {SUBJECTS[0]: ("127.0.0.1", 9500)}
 
@@ -51,9 +51,9 @@ async def run_dfedsam():
     trainer2 = make_trainer_for_subject(DATA_DIR, SUBJECTS[1])
 
     cfg_server = DFedSAMConfig(agent_id=SUBJECTS[0], host="127.0.0.1", port=9600,
-                               model_id="wear", max_rounds=5, is_server=True)
+                            model_id="wear", max_rounds=5, is_server=True)
     cfg_client = DFedSAMConfig(agent_id=SUBJECTS[1], host="127.0.0.1", port=9601,
-                               model_id="wear", max_rounds=5, is_server=False)
+                            model_id="wear", max_rounds=5, is_server=False)
 
     peers_client = {SUBJECTS[0]: ("127.0.0.1", 9600)}
 
@@ -75,9 +75,9 @@ async def run_decefl():
     trainer2 = make_trainer_for_subject(DATA_DIR, SUBJECTS[1])
 
     cfg_server = DeceFLConfig(agent_id=SUBJECTS[0], host="127.0.0.1", port=9700,
-                              model_id="wear", max_rounds=5, is_server=True)
+                            model_id="wear", max_rounds=5, is_server=True)
     cfg_client = DeceFLConfig(agent_id=SUBJECTS[1], host="127.0.0.1", port=9701,
-                              model_id="wear", max_rounds=5, is_server=False)
+                            model_id="wear", max_rounds=5, is_server=False)
 
     peers_client = {SUBJECTS[0]: ("127.0.0.1", 9700)}
 
