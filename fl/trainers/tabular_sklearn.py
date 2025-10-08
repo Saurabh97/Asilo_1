@@ -17,6 +17,7 @@ def _load_csv(path: str):
 
 def make_trainer_for_subject(data_dir: str, subject_id: str, test_size=0.2):
     path = os.path.join(data_dir, f"{subject_id}.csv")
+    print(f"Loading data for subject {subject_id} from {path} {os.path.exists(path)}")
     if not os.path.exists(path):
         # synth fallback
         n, d = 2000, 16

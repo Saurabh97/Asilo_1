@@ -15,6 +15,6 @@ agents:
   - { id: S07, host: 127.0.0.1, port: 9207, model_id: wear }
   - { id: S08, host: 127.0.0.1, port: 9208, model_id: wear }
   - { id: S11, host: 127.0.0.1, port: 9209, model_id: wear }
-  - { id: S12, host: 127.0.0.1, port: 9210, model_id: wear }
+  - { id: S14, host: 127.0.0.1, port: 9210, model_id: wear }
 
-data_dir: Asilo_1/data/processed/WESAD_wrist
+data_dir: data/processed/WESAD_wrist/
