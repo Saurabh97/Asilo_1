@@ -2,8 +2,8 @@ seed: 42
 round_time_s: 0.1
 
 ttl_seconds: 35
-u_eps: 0.0025                  # ↑ raise threshold, filter micro-updates
-speak_gate_factor: 1.25        # ↑ require stronger advantage before speaking
+u_eps: 0.0005                  # ↑ raise threshold, filter micro-updates
+speak_gate_factor: 1.10        # ↑ require stronger advantage before speaking
 artifact_order: ["head", "proto"]
 head_every: 10
 
@@ -29,15 +29,15 @@ pheromone:
   reputation_kappa: 0.5
 
 trigger:
-  theta_high: 0.90
-  theta_low: 0.78
+  theta_high: 0.5
+  theta_low: 0.2
   cooldown_s: 6.0
   bucket_capacity: 40000
   bucket_refill_per_s: 4000
 
 capabilities:
-  FAST: { width: 1.0, local_batches: 10, k_peers: 1, max_bytes_round: 65536 }   # tuned
-  SLOW: { width: 0.5, local_batches: 6,  k_peers: 1, max_bytes_round: 65536 }   # tuned
+  FAST: { width: 1.0, local_batches: 10, k_peers: 1, max_bytes_round: 655360 }   # tuned
+  SLOW: { width: 0.5, local_batches: 6,  k_peers: 1, max_bytes_round: 655360 }   # tuned
 
 agents:
   - { id: S02, host: 127.0.0.1, port: 9002, model_id: wear, capability: SLOW }

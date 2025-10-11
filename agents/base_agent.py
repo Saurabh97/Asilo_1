@@ -12,7 +12,8 @@ from Asilo_1.p2p.transport import P2PNode
 from Asilo_1.p2p.neighbor_manager import NeighborManager
 from Asilo_1.fl.trainers.base import LocalTrainer
 from Asilo_1.core.monitor import CSVMonitor
-from Asilo_1.fl.artifacts.prototypes import build_prototypes, apply_proto_pull
+from Asilo_1.fl.artifacts.prototypes import build_prototypes, apply_proto_pull,pack_prototypes
+from Asilo_1.fl.artifacts.head_delta import pack_head
 from Asilo_1.p2p.messages import Hello, PheromoneMsg, ModelDeltaMsg, Join, Welcome, Introduce, Bye
 from Asilo_1.fl.artifacts.head_delta import pack_head
 from Asilo_1.fl.artifacts.robust_agg import cosine_similarity, trimmed_mean, geometric_median
@@ -99,9 +100,9 @@ class Agent:
         while True:
             # stop guards
             if self.cfg.max_rounds is not None and self.t_round >= self.cfg.max_rounds:
-                print(f"[{self.id}] ✓ reached max_rounds={self.cfg.max_rounds}", flush=True); return
+                print(f"[{self.id}] reached max_rounds={self.cfg.max_rounds}", flush=True); return
             if self.cfg.max_seconds is not None and (time.time() - self._t_start) >= self.cfg.max_seconds:
-                print(f"[{self.id}] ✓ reached max_seconds={self.cfg.max_seconds}", flush=True); return
+                print(f"[{self.id}] reached max_seconds={self.cfg.max_seconds}", flush=True); return
 
             t0 = time.time()
             # --- local step ---
@@ -148,7 +149,7 @@ class Agent:
                 reason = f"pheromone gate failed (p_local={self._p_local:.4f}, best_peer={best_peer_score:.4f}, factor={factor})"
 
             if reason:
-                print(f"[{self.id}] ✖ not sending this round → {reason}", flush=True)
+                print(f"[{self.id}] not sending this round → {reason}", flush=True)
             else:
                 payload, size = self._build_payload()
                 total_send = size * self.cfg.capability.k_peers
@@ -156,10 +157,10 @@ class Agent:
                     await self._broadcast_delta(payload, size)
                     self.bytes_sent += total_send
                     self.trigger.on_send(total_send)
-                    print(f"[{self.id}] ✓ sending update (kind={payload.get('kind')} size={size} "
+                    print(f"[{self.id}] sending update (kind={payload.get('kind')} size={size} "
                         f"to {self.cfg.capability.k_peers} peers)", flush=True)
                 else:
-                    print(f"[{self.id}] ✖ payload too large (size={size}, "
+                    print(f"[{self.id}]  payload too large (size={size}, "
                         f"limit={self.cfg.capability.max_bytes_round})", flush=True)
 
             
@@ -294,7 +295,7 @@ class Agent:
         for aid, host, port, cap in msg.peers:
             if aid != self.id:
                 self.neighbors.add_or_update(aid, host, port, cap)
-        print(f"[{self.id}] ✓ Welcome: {len(msg.peers)} peers known", flush=True)
+        print(f"[{self.id}]  Welcome: {len(msg.peers)} peers known", flush=True)
 
     async def _on_introduce(self, msg: Introduce):
         if msg.agent_id != self.id:
@@ -310,7 +311,7 @@ class Agent:
             await asyncio.sleep(5.0)
             dead = self.neighbors.sweep_dead()
             for aid in dead:
-                print(f"[{self.id}] ✖ timeout peer {aid}", flush=True)
+                print(f"[{self.id}]  timeout peer {aid}", flush=True)
 
     async def _broadcast_pheromone(self, p: float):
         for aid, peer in self.neighbors.topk(self.cfg.capability.k_peers):
@@ -320,38 +321,49 @@ class Agent:
             except Exception: pass
 
     def _build_payload(self) -> Tuple[Dict[str, Any], int]:
+
+        budget = getattr(self.cfg.capability, "max_bytes_round", 0) or 0
+
         order = list(self.cfg.artifact_order)
-        # optional periodic head forcing
         if self.cfg.head_every and (self.t_round % self.cfg.head_every == 0):
             order = ["head"] + [o for o in order if o != "head"]
 
-        # build once
-        proto, size_p = None, 0
-        head, size_h = None, 0
+        proto_payload, proto_bytes = None, 0
+        head_payload, head_bytes = None, 0
+
+        print(f"[payload] order={order} budget={budget}")
 
         for kind in order:
-            if kind == "proto" and proto is None:
+            if kind == "head" and head_payload is None:
+                alpha = getattr(self.cfg, "head_alpha", 0.5)
+                head_payload, head_bytes = pack_head(self.trainer.model, alpha=alpha)
+                print(f"[payload] head_bytes={head_bytes} reason={head_payload.get('reason')}")
+                if head_bytes > 0 and head_bytes <= budget:
+                    return head_payload, head_bytes
+
+            if kind == "proto" and proto_payload is None:
                 try:
                     X, y = self.trainer.X_train, self.trainer.y_train
                     proto = build_prototypes(X, y)
-                    size_p = sum(len(v["mean"]) for v in proto["prototypes"].values()) * 4 + 16
-                except Exception:
-                    proto, size_p = None, 0
-                if proto and size_p <= self.cfg.capability.max_bytes_round:
-                    return proto, size_p
+                    proto_payload, proto_bytes = pack_prototypes(proto)
+                    print(f"[payload] proto_bytes={proto_bytes}")
+                except Exception as e:
+                    print(f"[payload] proto_built=False err={e!r}")
+                    proto_payload, proto_bytes = None, 0
+                if proto_bytes > 0 and proto_bytes <= budget:
+                    return proto_payload, proto_bytes
 
-            if kind == "head" and head is None:
-                head, size_h = pack_head(self.trainer.model)
-                if head and size_h <= self.cfg.capability.max_bytes_round:
-                    return head, size_h
+        # fallback: prefer any >0-byte artifact that fits
+        for payload, nbytes, name in ((head_payload, head_bytes, "head"),
+                                    (proto_payload, proto_bytes, "proto")):
+            if nbytes > 0 and nbytes <= budget:
+                print(f"[payload] fallback→{name} bytes={nbytes}")
+                return payload, nbytes
 
-        # fallback: whichever fits
-        if proto and size_p <= self.cfg.capability.max_bytes_round:
-            return proto, size_p
-        if head and size_h <= self.cfg.capability.max_bytes_round:
-            return head, size_h
-        # last resort: nothing
-        return {"kind": "none"}, 0
+        reason = (head_payload or {}).get("reason") or (proto_payload or {}).get("reason") or "no_artifact_fits"
+        print(f"[payload] none reason={reason} budget={budget} head={head_bytes} proto={proto_bytes}")
+        return {"kind": "none", "reason": reason, "budget": budget}, 0
+
 
 
     async def _broadcast_delta(self, payload: Dict[str, Any], size: int):

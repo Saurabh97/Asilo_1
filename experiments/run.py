@@ -1,7 +1,9 @@
 # Asilo_1/experiments/run.py
-import os, sys, yaml, asyncio, signal
+import os, sys, yaml, asyncio, signal,io
 from functools import partial
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from Asilo_1.core.pheromone import PheromoneConfig
 from Asilo_1.core.capability import CapabilityProfile
