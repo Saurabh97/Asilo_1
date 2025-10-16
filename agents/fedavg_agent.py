@@ -1,4 +1,3 @@
-# Asilo_1/agents/fedavg_agent.py
 import asyncio, time, numpy as np
 from typing import Dict, Tuple, List
 from dataclasses import dataclass
@@ -15,6 +14,7 @@ except Exception:
     torch = None
     nn = None
 
+
 @dataclass
 class FedAvgConfig:
     agent_id: str
@@ -25,8 +25,9 @@ class FedAvgConfig:
     max_rounds: int = 200
     is_server: bool = False
 
+
 class FedAvgAgent:
-    def __init__(self, cfg: FedAvgConfig, trainer: LocalTrainer, role: str, peers: Dict[str, Tuple[str,int]]):
+    def __init__(self, cfg: FedAvgConfig, trainer: LocalTrainer, role: str, peers: Dict[str, Tuple[str, int]]):
         self.cfg = cfg
         self.trainer = trainer
         self.node = P2PNode(cfg.host, cfg.port)
@@ -57,29 +58,63 @@ class FedAvgAgent:
         while self.round < self.cfg.max_rounds:
             t0 = time.time()
 
-            # local train + eval
+            # ---- Round start diagnostics ----
+            if self.is_server:
+                vec, _ = self._get_weights()
+                if vec is not None:
+                    print(f"[{self.id}] START round={self.round} "
+                          f"head_norm_before_train={np.linalg.norm(vec):.6f}", flush=True)
+                else:
+                    print(f"[{self.id}] START round={self.round} no weights yet", flush=True)
+
+            # ---- Local train + eval ----
             self.trainer.fit_local(5)
             metrics = self.trainer.eval()
+            f1 = float(metrics.get("f1_val", 0.0))
 
+            # ---- CLIENT side ----
             if not self.is_server:
                 weights, size = self._get_weights()
                 if weights is not None:
                     payload = {"weights": weights.tolist()}
                     msg = ModelDeltaMsg(agent_id=self.id, t=self.round, model_id=self.cfg.model_id,
                                         strategy="fedavg", payload=payload, bytes_size=size)
-                    # send to server
                     for aid, (host, port) in self.peers.items():
                         await self.node.send(host, port, msg)
                         self.bytes_sent += size
+                        print(f"[{self.id}] SENT update → to {aid}@{host}:{port} "
+                              f"size={size} bytes, norm={np.linalg.norm(weights):.6f}, "
+                              f"f1={f1:.4f}, round={self.round}", flush=True)
+
+            # ---- SERVER side aggregation ----
             else:
-                # aggregate if we have new updates
                 if self.updates:
-                    agg = np.mean(self.updates, axis=0)
+                    stack = np.stack(self.updates, axis=0)
+                    norms = [float(np.linalg.norm(u)) for u in stack]
+                    print(f"[{self.id}] AGGREGATING {len(self.updates)} updates "
+                          f"(shape={stack.shape}) stack_norms={norms}", flush=True)
+
+                    agg = np.mean(stack, axis=0)
+                    agg_norm = np.linalg.norm(agg)
+                    print(f"[{self.id}] AGG mean_norm={agg_norm:.6f}", flush=True)
+
+                    before_vec, _ = self._get_weights()
+                    before_norm = np.linalg.norm(before_vec) if before_vec is not None else 0.0
+
                     self._set_weights(agg)
+
+                    after_vec, _ = self._get_weights()
+                    after_norm = np.linalg.norm(after_vec) if after_vec is not None else 0.0
+                    delta_norm = np.linalg.norm(after_vec - before_vec) if (before_vec is not None and after_vec is not None) else 0.0
+
+                    print(f"[{self.id}] SERVER MERGE: before_norm={before_norm:.6f}, "
+                          f"after_norm={after_norm:.6f}, delta_norm={delta_norm:.6f}, "
+                          f"round={self.round}", flush=True)
+
                     self.updates.clear()
 
-            # CSV schema: (round, bytes_sent, utility, pheromone, f1_val)
-            self.monitor.log(self.round, self.bytes_sent, 0.0, 0.0, metrics.get("f1_val", 0.0))
+            # ---- Monitoring ----
+            self.monitor.log(self.round, self.bytes_sent, 0.0, 0.0, f1)
 
             self.round += 1
             dt = self.cfg.round_time_s - (time.time() - t0)
@@ -93,31 +128,33 @@ class FedAvgAgent:
                 return
             arr = np.asarray(w, dtype=np.float32)
             self.updates.append(arr)
-            # count bytes received as "sent" to keep comms-comparison fair
+            print(f"[{self.id}] RECEIVED update from {msg.agent_id} "
+                  f"(size={arr.size}, norm={np.linalg.norm(arr):.6f}, "
+                  f"total_buffered={len(self.updates)})", flush=True)
+            # count bytes received as "sent" to keep comms comparison fair
             self.bytes_sent += int(msg.bytes_size or 0)
 
     async def _on_join(self, msg: Join):
-        # server acknowledges; we keep welcome minimal to match ASILO style
         if self.is_server:
             peers = [(self.id, self.cfg.host, self.cfg.port, "server")]
             await self.node.send(msg.host, msg.port, Welcome(peers=peers))
 
     async def _on_welcome(self, msg: Welcome):
-        # no-op (already know server)
         return
 
+    # ---- model helpers ----
     @staticmethod
     def _find_linear_head_torch(model):
         if nn is None:
             return None
-        # Try common classifier heads first
         def _get(root, path: str):
             cur = root
             for part in path.split("."):
                 if not hasattr(cur, part): return None
                 cur = getattr(cur, part)
             return cur
-        for p in ["fc","classifier","classifier.6","classifier.3","head","linear","model.head","model.classifier"]:
+        for p in ["fc","classifier","classifier.6","classifier.3","head","linear",
+                  "model.head","model.classifier"]:
             m = _get(model, p)
             if m is None: continue
             if isinstance(m, nn.Linear): return m
@@ -126,21 +163,18 @@ class FedAvgAgent:
                 for sub in m.modules():
                     if isinstance(sub, nn.Linear): last = sub
                 if last is not None: return last
-        # Fallback: last Linear anywhere
         last = None
         for m in getattr(model, "modules", lambda: [])():
             if isinstance(m, nn.Linear): last = m
         return last
 
     def _get_weights(self):
-        # ---- sklearn path ----
         coef = getattr(self.trainer.model, "coef_", None)
         inter = getattr(self.trainer.model, "intercept_", None)
         if coef is not None and inter is not None:
             vec = np.concatenate([np.ravel(coef), np.ravel(np.atleast_1d(inter))]).astype(np.float32)
             return vec, int(vec.nbytes)
 
-        # ---- torch path ----
         if torch is not None and isinstance(getattr(self.trainer, "model", None), nn.Module):
             head = self._find_linear_head_torch(self.trainer.model)
             if head is None or getattr(head, "weight", None) is None:
@@ -154,7 +188,6 @@ class FedAvgAgent:
         return None, 0
 
     def _set_weights(self, vec: np.ndarray):
-        # ---- sklearn path ----
         coef = getattr(self.trainer.model, "coef_", None)
         inter = getattr(self.trainer.model, "intercept_", None)
         if coef is not None and inter is not None:
@@ -163,7 +196,6 @@ class FedAvgAgent:
             self.trainer.model.intercept_ = vec[csz:]
             return
 
-        # ---- torch path ----
         if torch is not None and isinstance(getattr(self.trainer, "model", None), nn.Module):
             head = self._find_linear_head_torch(self.trainer.model)
             if head is None or getattr(head, "weight", None) is None:

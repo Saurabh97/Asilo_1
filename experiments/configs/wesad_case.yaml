@@ -1,22 +1,23 @@
 seed: 42
-round_time_s: 0.1
+round_time_s: 0.20
 
 ttl_seconds: 35
-u_eps: 0.0005                  # ↑ raise threshold, filter micro-updates
-speak_gate_factor: 1.10        # ↑ require stronger advantage before speaking
-artifact_order: ["head", "proto"]
+u_eps: 0.000                  # ↑ raise threshold, filter micro-updates
+speak_gate_factor: 0.00        # ↑ require stronger advantage before speaking
+artifact_order: ["head","proto"]
 head_every: 10
 
 run_limits:
   max_rounds: 200
-  max_seconds: 600
+  max_seconds: 1200
 
 robust:
-  cos_gate_thresh: 0.2
-  agg_mode: "trimmed"          # ↑ more stable than median for your case
+  agg_mode: "median"
   trim_p: 0.10
-  aggregate_every: 5
-  rollback_tol: 0.002          # ↑ tighter rollback tolerance
+  cos_gate_thresh: 0.0035     # <- raise from 0.20
+  aggregate_every: 1
+  rollback_tol: 0.0015
+  staleness_ttl: 3          # if your agent supports it; ignore deltas older than 3 rounds
 
 pheromone:
   rho: 0.005                   # ↓ slower evaporation (was 0.03)
@@ -30,21 +31,30 @@ pheromone:
 
 trigger:
   theta_high: 0.5
-  theta_low: 0.2
-  cooldown_s: 6.0
+  theta_low: 0.1
+  cooldown_s: 1.0
   bucket_capacity: 40000
   bucket_refill_per_s: 4000
 
 capabilities:
   FAST: { width: 1.0, local_batches: 10, k_peers: 1, max_bytes_round: 655360 }   # tuned
-  SLOW: { width: 0.5, local_batches: 6,  k_peers: 1, max_bytes_round: 655360 }   # tuned
+  SLOW: { width: 0.5, local_batches: 06,  k_peers: 1, max_bytes_round: 655360 }   # tuned
 
 agents:
   - { id: S02, host: 127.0.0.1, port: 9002, model_id: wear, capability: SLOW }
+  - { id: S03, host: 127.0.0.1, port: 9003, model_id: wear, capability: FAST }
+  - { id: S04, host: 127.0.0.1, port: 9004, model_id: wear, capability: SLOW }
   - { id: S05, host: 127.0.0.1, port: 9005, model_id: wear, capability: FAST }
-  - { id: S07, host: 127.0.0.1, port: 9007, model_id: wear, capability: SLOW }
-  - { id: S08, host: 127.0.0.1, port: 9008, model_id: wear, capability: FAST }
-  - { id: S11, host: 127.0.0.1, port: 9009, model_id: wear, capability: SLOW }
-  - { id: S14, host: 127.0.0.1, port: 9010, model_id: wear, capability: FAST }
+  - { id: S06, host: 127.0.0.1, port: 9007, model_id: wear, capability: SLOW }
+  - { id: S07, host: 127.0.0.1, port: 9008, model_id: wear, capability: FAST }
+  - { id: S08, host: 127.0.0.1, port: 9009, model_id: wear, capability: SLOW }
+  - { id: S09, host: 127.0.0.1, port: 9010, model_id: wear, capability: FAST }
+  - { id: S10, host: 127.0.0.1, port: 9011, model_id: wear, capability: SLOW }
+  - { id: S11, host: 127.0.0.1, port: 9012, model_id: wear, capability: FAST }
+  - { id: S13, host: 127.0.0.1, port: 9013, model_id: wear, capability: SLOW }
+  - { id: S14, host: 127.0.0.1, port: 9014, model_id: wear, capability: FAST }
+  - { id: S15, host: 127.0.0.1, port: 9015, model_id: wear, capability: SLOW }
+  - { id: S16, host: 127.0.0.1, port: 9016, model_id: wear, capability: FAST }
+  - { id: S17, host: 127.0.0.1, port: 9017, model_id: wear, capability: SLOW }
 
 data_dir: data/processed/WESAD_wrist/

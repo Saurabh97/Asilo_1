@@ -1,47 +1,34 @@
-# Asilo_1/fl/artifacts/head_delta.py
 """
 Head (classifier) artifact pack/apply for both scikit-learn and PyTorch models.
 
 - sklearn: packs coef_ and intercept_
 - torch: finds the final nn.Linear head and packs weight (+ bias if present)
 - includes alpha for receiver-side blending: new = (1-alpha)*old + alpha*recv
-
-Returns:
-  payload: {"kind":"head", "npz": <bytes>} or {"kind":"head","empty":True,"reason":...}
-  nbytes:  length of the "npz" buffer (0 if empty)
 """
 
 from typing import Dict, Any, Tuple, Optional
 import io
 import numpy as np
 
-# --- optional deps (safe import) ---
 try:
     import torch
     import torch.nn as nn
-except Exception:  # pragma: no cover
+except Exception:
     torch = None
     nn = None
 
 
 # ============== sklearn helpers ==============
-
 def _unwrap_sklearn_estimator(model):
-    """
-    If model is a Pipeline or has nested steps, return the final estimator
-    that actually has coef_/intercept_. Otherwise return model unchanged.
-    """
     for attr in ("steps", "named_steps"):
         if hasattr(model, attr):
             steps = getattr(model, attr)
             if isinstance(steps, dict):
                 candidates = list(steps.values())
             elif isinstance(steps, list):
-                # Pipeline([...("clf", Estimator)]) -> last item is tuple(name, est)
                 candidates = [s[-1] if isinstance(s, tuple) else s for s in steps]
             else:
                 candidates = []
-
             for est in reversed(candidates):
                 if hasattr(est, "coef_") and hasattr(est, "intercept_"):
                     return est
@@ -49,9 +36,7 @@ def _unwrap_sklearn_estimator(model):
 
 
 # ============== torch helpers ==============
-
 _DEFAULT_HEAD_PATHS = [
-    # common torchvision-ish locations
     "fc",
     "classifier",
     "classifier.6",
@@ -60,17 +45,11 @@ _DEFAULT_HEAD_PATHS = [
     "linear",
     "model.head",
     "model.classifier",
-    # add your custom ones here if needed, e.g.:
-    # "clf.linear",
 ]
 
 def set_torch_head_paths(paths):
-    """
-    Allow caller to override/extend the attribute paths we probe to find the head.
-    """
     global _DEFAULT_HEAD_PATHS
     _DEFAULT_HEAD_PATHS = list(paths)
-
 
 def _get_by_attr_path(root, path: str):
     cur = root
@@ -80,18 +59,10 @@ def _get_by_attr_path(root, path: str):
         cur = getattr(cur, part)
     return cur
 
-
 def _find_linear_head_torch(model) -> Optional["nn.Linear"]:
-    """
-    Heuristics to find the classifier head (nn.Linear) in common Torch models.
-    - Try common attribute paths
-    - If attribute is a Sequential, use its last Linear
-    - Fallback: last Linear anywhere in the model
-    """
     if nn is None:
         return None
-
-    # 1) try known attribute paths first
+    # Try known attribute paths first
     for p in _DEFAULT_HEAD_PATHS:
         mod = _get_by_attr_path(model, p)
         if mod is None:
@@ -105,8 +76,7 @@ def _find_linear_head_torch(model) -> Optional["nn.Linear"]:
                     last_lin = m
             if last_lin is not None:
                 return last_lin
-
-    # 2) fallback: walk entire module tree and return the last Linear
+    # Fallback: last Linear anywhere in model
     last_linear = None
     for m in model.modules():
         if isinstance(m, nn.Linear):
@@ -115,21 +85,21 @@ def _find_linear_head_torch(model) -> Optional["nn.Linear"]:
 
 
 # ============== public API ==============
-
 def pack_head(model, *, alpha: float = 0.5) -> Tuple[Dict[str, Any], int]:
     """
     Build a compact 'head' payload from either sklearn (coef_/intercept_) or PyTorch (nn.Linear).
     Returns (payload, nbytes). If nbytes == 0, payload['empty']=True with 'reason'.
     """
-    # --- sklearn path ---
     mdl = _unwrap_sklearn_estimator(model)
     coef = getattr(mdl, "coef_", None)
     inter = getattr(mdl, "intercept_", None)
+
+    # --- sklearn path ---
     if coef is not None and inter is not None:
         buf = io.BytesIO()
         np.savez_compressed(
             buf,
-            kind="sk",
+            _kind=np.array(["sk"], dtype="<U10"),
             alpha=np.array([alpha], dtype=np.float32),
             coef=np.asarray(coef),
             intercept=np.asarray(inter),
@@ -154,14 +124,14 @@ def pack_head(model, *, alpha: float = 0.5) -> Tuple[Dict[str, Any], int]:
         if b is None:
             np.savez_compressed(
                 buf,
-                kind="torch",
+                _kind=np.array(["torch"], dtype="<U10"),
                 alpha=np.array([alpha], dtype=np.float32),
                 weight=w,
             )
         else:
             np.savez_compressed(
                 buf,
-                kind="torch",
+                _kind=np.array(["torch"], dtype="<U10"),
                 alpha=np.array([alpha], dtype=np.float32),
                 weight=w,
                 bias=b,
@@ -169,7 +139,7 @@ def pack_head(model, *, alpha: float = 0.5) -> Tuple[Dict[str, Any], int]:
         data = buf.getvalue()
         return {"kind": "head", "npz": data}, len(data)
 
-    except Exception as e:  # keep the reason handy for logs
+    except Exception as e:
         return {"kind": "head", "empty": True, "reason": f"torch_pack_error:{e}"}, 0
 
 
@@ -186,7 +156,8 @@ def apply_head(model, payload: Dict[str, Any]) -> None:
         return
 
     arr = np.load(io.BytesIO(raw))
-    kind = str(arr["kind"])
+    # safer extraction: handle old 'kind' or new '_kind'
+    kind = str(arr["_kind"][0]) if "_kind" in arr else str(arr["kind"][0])
     alpha = float(arr["alpha"][0]) if "alpha" in arr else 0.5
 
     if kind == "sk":
@@ -207,16 +178,13 @@ def apply_head(model, payload: Dict[str, Any]) -> None:
 
         w_r = arr["weight"]
         if head.weight.shape != w_r.shape:
-            # class count or feature width differs; skip to avoid corruption
-            return
+            return  # skip incompatible shapes
 
         device = head.weight.device
         dtype = head.weight.dtype
-
         w_r_t = torch.from_numpy(w_r).to(device=device, dtype=dtype)
         with torch.no_grad():
             head.weight.copy_((1.0 - alpha) * head.weight + alpha * w_r_t)
-
             if "bias" in arr and getattr(head, "bias", None) is not None:
                 b_r = arr["bias"]
                 if head.bias.shape == b_r.shape:

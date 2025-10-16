@@ -130,7 +130,7 @@ class SkTabularTrainer(LocalTrainer):
     # Utility computation
     # ---------------------- #
     def compute_utility(self, prev: Dict[str, float], curr: Dict[str, float]) -> float:
-        print(f"  prev: {prev}, curr: {curr}")
+        #print(f"  prev: {prev}, curr: {curr}")
         return float(max(0.0, curr.get("f1_val", 0.0) - prev.get("f1_val", 0.0)) * 5.0)
 
     # ---------------------- #

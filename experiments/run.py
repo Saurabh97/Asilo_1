@@ -1,7 +1,6 @@
-# Asilo_1/experiments/run.py
-import os, sys, yaml, asyncio, signal,io
-from functools import partial
+import os, sys, yaml, asyncio, io
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+# ensure stdout/err don’t crash on odd bytes
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
@@ -11,10 +10,16 @@ from Asilo_1.core.trigger import TriggerConfig
 from Asilo_1.agents.base_agent import Agent, AgentConfig
 from Asilo_1.fl.trainers.tabular_sklearn import make_trainer_for_subject
 
+
 async def launch_agent(a, caps, pherocfg, trigcfg, data_dir, peers, global_robust, global_limits, global_misc):
     capd = caps[a['capability']]
-    cap = CapabilityProfile(a['capability'], capd['width'], capd['local_batches'],
-                            capd['k_peers'], capd['max_bytes_round'])
+    cap = CapabilityProfile(
+        a['capability'],
+        capd['width'],
+        capd['local_batches'],
+        capd['k_peers'],
+        capd['max_bytes_round'],
+    )
 
     a_robust = a.get('robust') or {}
     robust = {**global_robust, **a_robust}
@@ -54,10 +59,22 @@ async def launch_agent(a, caps, pherocfg, trigcfg, data_dir, peers, global_robus
 
     trainer = make_trainer_for_subject(data_dir, a['id'])
     ag = Agent(cfg, trainer, peers)
+
     try:
         await ag.run_forever()
+    except asyncio.CancelledError:
+        pass
     finally:
-        await ag.send_bye()
+        # graceful shutdown
+        try:
+            await ag.send_bye()
+        except Exception:
+            pass
+        try:
+            if hasattr(ag, "shutdown") and callable(getattr(ag, "shutdown")):
+                await ag.shutdown()
+        except Exception:
+            pass
 
 
 async def main(cfg_path: str):
@@ -72,7 +89,7 @@ async def main(cfg_path: str):
     global_robust = cfg.get('robust', {}) or {}
     global_limits = cfg.get('run_limits', {}) or {}
 
-    # NEW: misc at top level
+    # top-level misc defaults (optional in YAML)
     global_misc = {
         "ttl_seconds": cfg.get('ttl_seconds'),
         "u_eps": cfg.get('u_eps'),
@@ -87,19 +104,24 @@ async def main(cfg_path: str):
     seed_id, seed_host, seed_port = seed['id'], seed['host'], seed['port']
 
     tasks = []
-    for a in agents:
-        peers = {} if a['id'] == seed_id else {seed_id: (seed_host, seed_port)}
-        tasks.append(asyncio.create_task(
-            launch_agent(a, caps, pherocfg, trigcfg, data_dir, peers,
-            global_robust, global_limits, global_misc)
-        ))
-
     try:
+        for a in agents:
+            peers = {} if a['id'] == seed_id else {seed_id: (seed_host, seed_port)}
+            tasks.append(
+                asyncio.create_task(
+                    launch_agent(a, caps, pherocfg, trigcfg, data_dir, peers,
+                                 global_robust, global_limits, global_misc),
+                    name=f"agent:{a['id']}"
+                )
+            )
         await asyncio.gather(*tasks)
-    except KeyboardInterrupt:
+    finally:
+        # always cancel/outwait to avoid “pending task” warnings
         for t in tasks:
-            t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+            if not t.done():
+                t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 if __name__ == '__main__':

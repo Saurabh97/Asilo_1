@@ -64,7 +64,15 @@ class DFedSAMAgent:
         await self.start()
         while self.round < self.cfg.max_rounds:
             t0 = time.time()
-
+            # 🔹 Add this block right here
+            if self.is_server:
+                vec, _ = self._get_weights()
+                if vec is not None:
+                    print(f"[{self.id}] START round={self.round} "
+                        f"head_norm_before_train={np.linalg.norm(vec):.6f}", flush=True)
+                else:
+                    print(f"[{self.id}] START round={self.round} no weights found", flush=True)
+            # 🔹 End of insertion
             # local train + eval
             self.trainer.fit_local(5)
             metrics = self.trainer.eval()
@@ -80,6 +88,8 @@ class DFedSAMAgent:
                     for aid, (host, port) in self.peers.items():
                         await self.node.send(host, port, msg)
                         self.bytes_sent += size
+                        print(f"[{self.id}] SENT update → size={size} bytes, norm={np.linalg.norm(weights):.6f}, round={self.round}", flush=True)
+
             else:
                 if self.updates:
                     stack = np.stack(self.updates, axis=0)    # (n, D)
@@ -89,10 +99,22 @@ class DFedSAMAgent:
                     w = 1.0 - np.clip(w_raw, 0.0, 1.0)
                     w = np.maximum(w, self.cfg.eps)
                     w = w / np.sum(w)
-
+                    print(f"[{self.id}] AGGREGATING {len(self.updates)} updates "
+                      f"(shape={stack.shape}) stack_norms="
+                      f"{[float(np.linalg.norm(u)) for u in self.updates]} "
+                      f"weights={w.tolist()}", flush=True)
                     agg = np.tensordot(w, stack, axes=(0, 0))  # weighted average
+                    agg_norm = np.linalg.norm(agg)
+                    print(f"[{self.id}] AGG weighted_mean_norm={agg_norm:.6f}", flush=True)
+                    before_vec, _ = self._get_weights()
+                    before_norm = np.linalg.norm(before_vec) if before_vec is not None else 0.0
                     self._set_weights(agg)
-
+                    after_vec, _ = self._get_weights()
+                    after_norm = np.linalg.norm(after_vec) if after_vec is not None else 0.0
+                    delta_norm = np.linalg.norm(after_vec - before_vec) if (before_vec is not None and after_vec is not None) else 0.0
+                    print(f"[{self.id}] SERVER MERGE: before_norm={before_norm:.6f}, "
+                      f"after_norm={after_norm:.6f}, delta_norm={delta_norm:.6f}, "
+                      f"round={self.round}", flush=True)
                     self.updates.clear()
                     self.weights_raw.clear()
 
@@ -111,6 +133,11 @@ class DFedSAMAgent:
                 return
             arr = np.asarray(w, dtype=np.float32)
             self.updates.append(arr)
+            print(f"[{self.id}] RECEIVED update from {msg.agent_id} "
+      f"(size={arr.size}, norm={np.linalg.norm(arr):.6f}, "
+      f"f1_val={msg.payload.get('f1_val', 0.0):.4f}, "
+      f"total_buffered={len(self.updates)})", flush=True)
+
             # record client's f1 proxy; default to 0.5 if missing
             self.weights_raw.append(float(msg.payload.get("f1_val", 0.5)))
             self.bytes_sent += int(msg.bytes_size or 0)

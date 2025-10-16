@@ -59,7 +59,15 @@ class DeceFLAgent:
         await self.start()
         while self.round < self.cfg.max_rounds:
             t0 = time.time()
-
+            # 🔹 Add this block right here
+            if self.is_server:
+                vec, _ = self._get_weights()
+                if vec is not None:
+                    print(f"[{self.id}] START round={self.round} "
+                        f"head_norm_before_train={np.linalg.norm(vec):.6f}", flush=True)
+                else:
+                    print(f"[{self.id}] START round={self.round} no weights found", flush=True)
+            # 🔹 End of insertion
             # local train + eval
             self.trainer.fit_local(5)
             metrics = self.trainer.eval()
@@ -74,13 +82,29 @@ class DeceFLAgent:
                     for aid, (host, port) in self.peers.items():
                         await self.node.send(host, port, msg)
                         self.bytes_sent += size
+                        print(f"[{self.id}] SENT update → size={size} bytes, norm={np.linalg.norm(weights):.6f}, round={self.round}", flush=True)
+
             else:
                 # robust aggregate if we have updates
                 if self.updates:
-                    stack = np.stack(self.updates, axis=0)  # (n, D)
+                    stack = np.stack(self.updates, axis=0)
+                    print(f"[{self.id}] AGGREGATING {len(self.updates)} updates (shape={stack.shape}) "
+                        f"stack_norms={[float(np.linalg.norm(u)) for u in self.updates]}", flush=True)
                     agg = coord_median(stack)
+                    print(f"[{self.id}] AGG median_norm={np.linalg.norm(agg):.6f}", flush=True)
+
+                    # before–after model check
+                    before_vec, _ = self._get_weights()
+                    before_norm = np.linalg.norm(before_vec) if before_vec is not None else 0.0
                     self._set_weights(agg)
+                    after_vec, _ = self._get_weights()
+                    after_norm = np.linalg.norm(after_vec) if after_vec is not None else 0.0
+                    delta_norm = np.linalg.norm(after_vec - before_vec) if (before_vec is not None and after_vec is not None) else 0.0
+                    print(f"[{self.id}] SERVER MERGE: before_norm={before_norm:.6f}, after_norm={after_norm:.6f}, "
+                        f"delta_norm={delta_norm:.6f}, round={self.round}", flush=True)
+
                     self.updates.clear()
+
 
             # keep CSV schema compatible with ASILO plotting
             self.monitor.log(self.round, self.bytes_sent, 0.0, 0.0, metrics.get("f1_val", 0.0))
@@ -98,6 +122,9 @@ class DeceFLAgent:
             arr = np.asarray(w, dtype=np.float32)
             self.updates.append(arr)
             self.bytes_sent += int(msg.bytes_size or 0)
+            print(f"[{self.id}] RECEIVED update from {msg.agent_id} "
+      f"(size={arr.size}, norm={np.linalg.norm(arr):.6f}, total_buffered={len(self.updates)})", flush=True)
+
 
     async def _on_join(self, msg: Join):
         if self.is_server:
