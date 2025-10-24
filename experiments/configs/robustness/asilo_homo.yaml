@@ -1,0 +1,60 @@
+seed: 7
+round_time_s: 0.1
+
+ttl_seconds: 35
+u_eps: 0.000
+speak_gate_factor: 0.00
+artifact_order: ["head","proto"]
+head_every: 5
+
+run_limits:
+  max_rounds: 50      # Phase 1: capped at 150 (plateau observed)
+
+robust:
+  agg_mode: "median"
+  trim_p: 0.10
+  aggregate_every: 1
+  rollback_tol: 0.005
+  cos_gate_thresh: 0.00
+
+pheromone:
+  rho: 0.005
+  eta: 1.0
+  tau0: 1.0
+  temp: 0.5
+  eps_greedy: 0.05
+  u_max: 0.05
+  beta_ucb: 0.3
+  reputation_kappa: 0.5
+
+trigger:
+  theta_high: 0.2
+  theta_low: 0.1
+  cooldown_s: 1.0
+  bucket_capacity: 40000
+  bucket_refill_per_s: 4000
+
+capabilities:
+  FAST: { width: 1.0, local_batches: 10, k_peers: 1, max_bytes_round: 655360 }
+  SLOW: { width: 0.5, local_batches: 6,  k_peers: 1, max_bytes_round: 655360 }
+
+# NOTE: Phase 1 keeps explicit assignments.
+# Phase 2 will programmatically assign fast/slow by fast_ratio.
+agents:
+  - { id: S2, host: 127.0.0.1, port: 9002, model_id: wear, capability: SLOW }
+  - { id: S3, host: 127.0.0.1, port: 9003, model_id: wear, capability: SLOW }
+  - { id: S4, host: 127.0.0.1, port: 9004, model_id: wear, capability: SLOW }
+  - { id: S5, host: 127.0.0.1, port: 9005, model_id: wear, capability: SLOW }
+  - { id: S6, host: 127.0.0.1, port: 9007, model_id: wear, capability: SLOW }
+  - { id: S7, host: 127.0.0.1, port: 9008, model_id: wear, capability: SLOW }
+  - { id: S8, host: 127.0.0.1, port: 9009, model_id: wear, capability: SLOW }
+  - { id: S9, host: 127.0.0.1, port: 9010, model_id: wear, capability: SLOW }
+  - { id: S10, host: 127.0.0.1, port: 9011, model_id: wear, capability: SLOW }
+  - { id: S11, host: 127.0.0.1, port: 9012, model_id: wear, capability: SLOW }
+  - { id: S13, host: 127.0.0.1, port: 9013, model_id: wear, capability: SLOW }
+  - { id: S14, host: 127.0.0.1, port: 9014, model_id: wear, capability: SLOW }
+  - { id: S15, host: 127.0.0.1, port: 9015, model_id: wear, capability: SLOW }
+  - { id: S16, host: 127.0.0.1, port: 9016, model_id: wear, capability: SLOW }
+  - { id: S17, host: 127.0.0.1, port: 9017, model_id: wear, capability: SLOW }
+
+data_dir: data/processed/Processed_Wrist_LSTM/

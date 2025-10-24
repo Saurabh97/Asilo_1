@@ -1,0 +1,10 @@
+{
+  "exp_name": "homogeneous_asilo_seed6",
+  "block": "homogeneous",
+  "label": "",
+  "method": "ASILO",
+  "seed": 6,
+  "rounds": 50,
+  "status": "ok",
+  "ts": 1761000936
+}

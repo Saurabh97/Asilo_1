@@ -8,8 +8,8 @@ artifact_order: ["head","proto"]
 head_every: 10
 
 run_limits:
-  max_rounds: 200
-  max_seconds: 1200
+  max_rounds: 50
+  #max_seconds: 1200
 
 robust:
   agg_mode: "median"
@@ -41,14 +41,14 @@ capabilities:
   SLOW: { width: 0.5, local_batches: 06,  k_peers: 1, max_bytes_round: 655360 }   # tuned
 
 agents:
-  - { id: S02, host: 127.0.0.1, port: 9002, model_id: wear, capability: SLOW }
-  - { id: S03, host: 127.0.0.1, port: 9003, model_id: wear, capability: FAST }
-  - { id: S04, host: 127.0.0.1, port: 9004, model_id: wear, capability: SLOW }
-  - { id: S05, host: 127.0.0.1, port: 9005, model_id: wear, capability: FAST }
-  - { id: S06, host: 127.0.0.1, port: 9007, model_id: wear, capability: SLOW }
-  - { id: S07, host: 127.0.0.1, port: 9008, model_id: wear, capability: FAST }
-  - { id: S08, host: 127.0.0.1, port: 9009, model_id: wear, capability: SLOW }
-  - { id: S09, host: 127.0.0.1, port: 9010, model_id: wear, capability: FAST }
+  - { id: S2, host: 127.0.0.1, port: 9002, model_id: wear, capability: SLOW }
+  - { id: S3, host: 127.0.0.1, port: 9003, model_id: wear, capability: FAST }
+  - { id: S4, host: 127.0.0.1, port: 9004, model_id: wear, capability: SLOW }
+  - { id: S5, host: 127.0.0.1, port: 9005, model_id: wear, capability: FAST }
+  - { id: S6, host: 127.0.0.1, port: 9007, model_id: wear, capability: SLOW }
+  - { id: S7, host: 127.0.0.1, port: 9008, model_id: wear, capability: FAST }
+  - { id: S8, host: 127.0.0.1, port: 9009, model_id: wear, capability: SLOW }
+  - { id: S9, host: 127.0.0.1, port: 9010, model_id: wear, capability: FAST }
   - { id: S10, host: 127.0.0.1, port: 9011, model_id: wear, capability: SLOW }
   - { id: S11, host: 127.0.0.1, port: 9012, model_id: wear, capability: FAST }
   - { id: S13, host: 127.0.0.1, port: 9013, model_id: wear, capability: SLOW }
@@ -57,4 +57,4 @@ agents:
   - { id: S16, host: 127.0.0.1, port: 9016, model_id: wear, capability: FAST }
   - { id: S17, host: 127.0.0.1, port: 9017, model_id: wear, capability: SLOW }
 
-data_dir: data/processed/WESAD_wrist/
+data_dir: data/processed/Processed_Wrist_LSTM/

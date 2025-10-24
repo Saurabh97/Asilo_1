@@ -1,0 +1,10 @@
+{
+  "exp_name": "heterogeneous_fast25_fedavg_seed12",
+  "block": "heterogeneous",
+  "label": "fast25",
+  "method": "FedAvg",
+  "seed": 12,
+  "rounds": 50,
+  "status": "ok",
+  "ts": 1761000778
+}

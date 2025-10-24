@@ -55,6 +55,18 @@ class Introduce:
 class Bye:
     agent_id: str
 
+# NEW: per-round synchronization
+@dataclass
+class RoundReady:
+    agent_id: str
+    t: int  # round index
+
+@dataclass
+class CommDone:
+    agent_id: str
+    t: int  # round index
+
+
 # Registry of message types by name
 _MSG_REGISTRY = {}
 def _register_msg(cls):
@@ -62,7 +74,7 @@ def _register_msg(cls):
     return cls
 
 # Register all message types
-for _cls in [Hello, PheromoneMsg, ModelDeltaMsg, StatsMsg, Join, Welcome, Introduce, Bye]:
+for _cls in [Hello, PheromoneMsg, ModelDeltaMsg, StatsMsg, Join, Welcome, Introduce, Bye,RoundReady, CommDone]:
     _register_msg(_cls)
 
 def _b64ify(obj):

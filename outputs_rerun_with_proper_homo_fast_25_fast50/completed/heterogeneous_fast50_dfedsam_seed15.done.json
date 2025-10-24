@@ -1,0 +1,10 @@
+{
+  "exp_name": "heterogeneous_fast50_dfedsam_seed15",
+  "block": "heterogeneous",
+  "label": "fast50",
+  "method": "DFedSAM",
+  "seed": 15,
+  "rounds": 50,
+  "status": "ok",
+  "ts": 1761008445
+}

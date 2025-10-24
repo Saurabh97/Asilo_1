@@ -20,7 +20,7 @@ class NeighborManager:
         self.k = k_default
         self.ttl = ttl_seconds
         self.members: Dict[str, PeerInfo] = {
-            aid: PeerInfo(aid, host, port, None, time.time(), 0.0, 0)
+            aid: PeerInfo(aid, host, port, None, time.time(), random.random()*10, 0)
             for aid, (host, port) in peers.items()
         }
 

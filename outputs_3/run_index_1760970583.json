@@ -1,0 +1,770 @@
+[
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "ASILO",
+    "seed": 13,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_asilo_seed13"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "ASILO",
+    "seed": 14,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_asilo_seed14"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "ASILO",
+    "seed": 15,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_asilo_seed15"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "ASILO",
+    "seed": 16,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_asilo_seed16"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "ASILO",
+    "seed": 17,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_asilo_seed17"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "ASILO",
+    "seed": 18,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_asilo_seed18"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "ASILO",
+    "seed": 11,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_asilo_seed11"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "ASILO",
+    "seed": 12,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_asilo_seed12"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "ASILO",
+    "seed": 13,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_asilo_seed13"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "ASILO",
+    "seed": 14,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_asilo_seed14"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "ASILO",
+    "seed": 15,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_asilo_seed15"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "ASILO",
+    "seed": 16,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_asilo_seed16"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "ASILO",
+    "seed": 17,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_asilo_seed17"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "ASILO",
+    "seed": 18,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_asilo_seed18"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "ASILO",
+    "seed": 1,
+    "rounds": 50,
+    "exp_name": "homogeneous_asilo_seed1"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "ASILO",
+    "seed": 2,
+    "rounds": 50,
+    "exp_name": "homogeneous_asilo_seed2"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "ASILO",
+    "seed": 3,
+    "rounds": 50,
+    "exp_name": "homogeneous_asilo_seed3"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "ASILO",
+    "seed": 4,
+    "rounds": 50,
+    "exp_name": "homogeneous_asilo_seed4"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "ASILO",
+    "seed": 5,
+    "rounds": 50,
+    "exp_name": "homogeneous_asilo_seed5"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "ASILO",
+    "seed": 6,
+    "rounds": 50,
+    "exp_name": "homogeneous_asilo_seed6"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "ASILO",
+    "seed": 7,
+    "rounds": 50,
+    "exp_name": "homogeneous_asilo_seed7"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "ASILO",
+    "seed": 8,
+    "rounds": 50,
+    "exp_name": "homogeneous_asilo_seed8"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "FedAvg",
+    "seed": 1,
+    "rounds": 50,
+    "exp_name": "homogeneous_fedavg_seed1"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "FedAvg",
+    "seed": 2,
+    "rounds": 50,
+    "exp_name": "homogeneous_fedavg_seed2"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "FedAvg",
+    "seed": 3,
+    "rounds": 50,
+    "exp_name": "homogeneous_fedavg_seed3"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "FedAvg",
+    "seed": 4,
+    "rounds": 50,
+    "exp_name": "homogeneous_fedavg_seed4"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "FedAvg",
+    "seed": 5,
+    "rounds": 50,
+    "exp_name": "homogeneous_fedavg_seed5"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "FedAvg",
+    "seed": 6,
+    "rounds": 50,
+    "exp_name": "homogeneous_fedavg_seed6"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "FedAvg",
+    "seed": 7,
+    "rounds": 50,
+    "exp_name": "homogeneous_fedavg_seed7"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "FedAvg",
+    "seed": 8,
+    "rounds": 50,
+    "exp_name": "homogeneous_fedavg_seed8"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DFedSAM",
+    "seed": 1,
+    "rounds": 50,
+    "exp_name": "homogeneous_dfedsam_seed1"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DFedSAM",
+    "seed": 2,
+    "rounds": 50,
+    "exp_name": "homogeneous_dfedsam_seed2"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DFedSAM",
+    "seed": 3,
+    "rounds": 50,
+    "exp_name": "homogeneous_dfedsam_seed3"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DFedSAM",
+    "seed": 4,
+    "rounds": 50,
+    "exp_name": "homogeneous_dfedsam_seed4"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DFedSAM",
+    "seed": 5,
+    "rounds": 50,
+    "exp_name": "homogeneous_dfedsam_seed5"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DFedSAM",
+    "seed": 6,
+    "rounds": 50,
+    "exp_name": "homogeneous_dfedsam_seed6"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DFedSAM",
+    "seed": 7,
+    "rounds": 50,
+    "exp_name": "homogeneous_dfedsam_seed7"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DFedSAM",
+    "seed": 8,
+    "rounds": 50,
+    "exp_name": "homogeneous_dfedsam_seed8"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DeceFL",
+    "seed": 1,
+    "rounds": 50,
+    "exp_name": "homogeneous_decefl_seed1"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DeceFL",
+    "seed": 2,
+    "rounds": 50,
+    "exp_name": "homogeneous_decefl_seed2"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DeceFL",
+    "seed": 3,
+    "rounds": 50,
+    "exp_name": "homogeneous_decefl_seed3"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DeceFL",
+    "seed": 4,
+    "rounds": 50,
+    "exp_name": "homogeneous_decefl_seed4"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DeceFL",
+    "seed": 5,
+    "rounds": 50,
+    "exp_name": "homogeneous_decefl_seed5"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DeceFL",
+    "seed": 6,
+    "rounds": 50,
+    "exp_name": "homogeneous_decefl_seed6"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DeceFL",
+    "seed": 7,
+    "rounds": 50,
+    "exp_name": "homogeneous_decefl_seed7"
+  },
+  {
+    "block": "homogeneous",
+    "label": "",
+    "method": "DeceFL",
+    "seed": 8,
+    "rounds": 50,
+    "exp_name": "homogeneous_decefl_seed8"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "ASILO",
+    "seed": 11,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_asilo_seed11"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "ASILO",
+    "seed": 12,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_asilo_seed12"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "FedAvg",
+    "seed": 11,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_fedavg_seed11"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "FedAvg",
+    "seed": 12,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_fedavg_seed12"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "FedAvg",
+    "seed": 13,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_fedavg_seed13"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "FedAvg",
+    "seed": 14,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_fedavg_seed14"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "FedAvg",
+    "seed": 15,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_fedavg_seed15"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "FedAvg",
+    "seed": 16,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_fedavg_seed16"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "FedAvg",
+    "seed": 17,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_fedavg_seed17"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "FedAvg",
+    "seed": 18,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_fedavg_seed18"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DFedSAM",
+    "seed": 11,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_dfedsam_seed11"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DFedSAM",
+    "seed": 12,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_dfedsam_seed12"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DFedSAM",
+    "seed": 13,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_dfedsam_seed13"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DFedSAM",
+    "seed": 14,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_dfedsam_seed14"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DFedSAM",
+    "seed": 15,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_dfedsam_seed15"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DFedSAM",
+    "seed": 16,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_dfedsam_seed16"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DFedSAM",
+    "seed": 17,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_dfedsam_seed17"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DFedSAM",
+    "seed": 18,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_dfedsam_seed18"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DeceFL",
+    "seed": 11,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_decefl_seed11"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DeceFL",
+    "seed": 12,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_decefl_seed12"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DeceFL",
+    "seed": 13,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_decefl_seed13"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DeceFL",
+    "seed": 14,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_decefl_seed14"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DeceFL",
+    "seed": 15,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_decefl_seed15"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DeceFL",
+    "seed": 16,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_decefl_seed16"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DeceFL",
+    "seed": 17,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_decefl_seed17"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast25",
+    "method": "DeceFL",
+    "seed": 18,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast25_decefl_seed18"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "FedAvg",
+    "seed": 11,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_fedavg_seed11"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "FedAvg",
+    "seed": 12,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_fedavg_seed12"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "FedAvg",
+    "seed": 13,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_fedavg_seed13"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "FedAvg",
+    "seed": 14,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_fedavg_seed14"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "FedAvg",
+    "seed": 15,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_fedavg_seed15"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "FedAvg",
+    "seed": 16,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_fedavg_seed16"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "FedAvg",
+    "seed": 17,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_fedavg_seed17"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "FedAvg",
+    "seed": 18,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_fedavg_seed18"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DFedSAM",
+    "seed": 11,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_dfedsam_seed11"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DFedSAM",
+    "seed": 12,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_dfedsam_seed12"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DFedSAM",
+    "seed": 13,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_dfedsam_seed13"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DFedSAM",
+    "seed": 14,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_dfedsam_seed14"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DFedSAM",
+    "seed": 15,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_dfedsam_seed15"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DFedSAM",
+    "seed": 16,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_dfedsam_seed16"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DFedSAM",
+    "seed": 17,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_dfedsam_seed17"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DFedSAM",
+    "seed": 18,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_dfedsam_seed18"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DeceFL",
+    "seed": 11,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_decefl_seed11"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DeceFL",
+    "seed": 12,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_decefl_seed12"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DeceFL",
+    "seed": 13,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_decefl_seed13"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DeceFL",
+    "seed": 14,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_decefl_seed14"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DeceFL",
+    "seed": 15,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_decefl_seed15"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DeceFL",
+    "seed": 16,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_decefl_seed16"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DeceFL",
+    "seed": 17,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_decefl_seed17"
+  },
+  {
+    "block": "heterogeneous",
+    "label": "fast50",
+    "method": "DeceFL",
+    "seed": 18,
+    "rounds": 50,
+    "exp_name": "heterogeneous_fast50_decefl_seed18"
+  }
+]

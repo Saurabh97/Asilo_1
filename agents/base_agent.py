@@ -1,5 +1,7 @@
 from __future__ import annotations
 import io
+import os
+import random
 import numpy as np
 import asyncio, time
 from typing import Dict, Any, Tuple
@@ -18,7 +20,7 @@ from Asilo_1.fl.artifacts.prototypes import (
 )
 from Asilo_1.fl.artifacts.head_delta import pack_head
 from Asilo_1.p2p.messages import (
-    Hello, PheromoneMsg, ModelDeltaMsg, Join, Welcome, Introduce, Bye
+    Hello, PheromoneMsg, ModelDeltaMsg, Join, Welcome, Introduce, Bye,RoundReady, CommDone
 )
 from Asilo_1.fl.artifacts.robust_agg import cosine_similarity
 from Asilo_1.fl.privacy.dp import clip_and_noise
@@ -54,7 +56,8 @@ class AgentConfig:
 
 
 class Agent:
-    def __init__(self, cfg: AgentConfig, trainer: LocalTrainer, peers: Dict[str, Tuple[str, int]]):
+    def __init__(self, cfg: AgentConfig, trainer: LocalTrainer, peers: Dict[str, Tuple[str, int]],start_gate: asyncio.Event | None = None,
+                 min_peers: int | None = None, round_slot_s: float | None = None):
         self.cfg = cfg
         self.trainer = trainer
         self.node = P2PNode(cfg.host, cfg.port)
@@ -64,10 +67,14 @@ class Agent:
         self.t_round = 0
         self.bytes_sent = 0
         self.id = cfg.agent_id
-        self.monitor = CSVMonitor(cfg.agent_id, exp_name="asilo")
+        exp_name = os.environ.get("EXP_NAME", "asilo")
+        self.monitor = CSVMonitor(cfg.agent_id, exp_name)
         self._p_local = self.cfg.pheromone.tau0
         self._t_start = time.time()
         self._last_eval = None
+        self._start_gate = start_gate or asyncio.Event()
+        if start_gate is None:
+            self._start_gate.set()  # default: no waiting if not provided
 
         # routes
         self.node.route('PheromoneMsg', self._on_pheromone)
@@ -89,6 +96,32 @@ class Agent:
         self._last_merge_vec = None
         self._last_merge_round = -1
 
+        # discovery + sync
+        self._min_peers = min_peers if min_peers is not None else max(0, len(peers))  # usually total-1
+        self._discovered_evt = asyncio.Event()
+        self._round_slot_s = round_slot_s or max(0.05, cfg.round_time_s)
+        self._epoch_t0 = None   # set when gate opens
+        self.cfg.round_time_s=self._round_slot_s
+        self.node.route('RoundReady', self._on_round_ready)   
+        self.node.route('CommDone', self._on_comm_done)
+        # per-round sync tokens
+        self._rr_tokens: set[tuple[int,str]] = set()  # (round, peer_id)
+        self._cd_tokens: set[tuple[int,str]] = set()
+        self._epoch_set = False
+
+    async def _broadcast_all(self, msg_obj):
+        for _, pi in self.neighbors.all_peers():
+            try:
+                await self.node.send(pi.host, pi.port, msg_obj)
+            except Exception:
+                pass       
+    async def _on_round_ready(self, msg: RoundReady):
+        if msg.t == self.t_round:  # only for our current round
+            self._rr_tokens.add((msg.t, msg.agent_id))
+
+    async def _on_comm_done(self, msg: CommDone):
+        if msg.t == self.t_round:
+            self._cd_tokens.add((msg.t, msg.agent_id))
     async def start(self):
         await self.node.start()
         known = self.neighbors.all_peers()
@@ -99,259 +132,369 @@ class Agent:
             await self.node.send(pi.host, pi.port, j)
         else:
             print(f"[{self.id}] seed node; no bootstrap", flush=True)
+    
+    def _have_quorum(self) -> bool:
+        # NeighborManager exposes all_peers(); exclude self
+        return len(self.neighbors.all_peers()) >= self._min_peers
 
-    async def run_forever(self):
-        await self.start()
-        prev_metrics = self.trainer.eval()
-        self._no_improve = 0
-
+    async def wait_discovery(self, timeout_s: float = 30.0):
+        # quick poll loop; simple and robust
+        end = asyncio.get_event_loop().time() + timeout_s
         while True:
-            # stop guards
-            if self.cfg.max_rounds is not None and self.t_round >= self.cfg.max_rounds:
-                print(f"[{self.id}] reached max_rounds={self.cfg.max_rounds}", flush=True); return
-            if self.cfg.max_seconds is not None and (time.time() - self._t_start) >= self.cfg.max_seconds:
-                print(f"[{self.id}] reached max_seconds={self.cfg.max_seconds}", flush=True); return
+            if self._have_quorum():
+                self._discovered_evt.set()
+                return True
+            if asyncio.get_event_loop().time() >= end:
+                # proceed even if not full quorum (but print)
+                print(f"[{self.id}] discovery timeout: have={len(self.neighbors.all_peers())} "
+                      f"need={self._min_peers} — proceeding.", flush=True)
+                return False
+            await asyncio.sleep(0.2)
+    def _set_epoch_now(self):
+        self._epoch_t0 = asyncio.get_event_loop().time()
 
-            t0 = time.time()
-            # ===== verify persistence of last merge =====
-            vec_start = self._get_head_vector()
-            if self._last_merge_vec is not None:
-                cos_after_merge = float(np.dot(vec_start, self._last_merge_vec)
-                                        / ((np.linalg.norm(vec_start) + 1e-9) * (np.linalg.norm(self._last_merge_vec) + 1e-9)))
-                print(f"[{self.id}] START round={self.t_round} "
-                    f"head_norm_before_train={np.linalg.norm(vec_start):.6f} "
-                    f"cos_to_last_merge={cos_after_merge:.4f} "
-                    f"(last merge round={self._last_merge_round})", flush=True)
-                if cos_after_merge < 0.95:
-                    print(f"[{self.id}] ⚠️ Model drifted since last merge! cos={cos_after_merge:.3f}", flush=True)
-            else:
-                print(f"[{self.id}] START round={self.t_round} "
-                    f"head_norm_before_train={np.linalg.norm(vec_start):.6f} (no previous merge yet)", flush=True)
+    async def _wait_for_round_slot(self, r: int):
+        # Align each round start to epoch + r*round_slot
+        if self._epoch_t0 is None:
+            return
+        target = self._epoch_t0 + r * self._round_slot_s
+        now = asyncio.get_event_loop().time()
+        if target > now:
+            await asyncio.sleep(target - now)
 
-            # ===== local step =====
-            self.trainer.fit_local(self.cfg.capability.local_batches)
-            curr_metrics = self.trainer.eval()
-            self._last_eval = curr_metrics
 
+    # ---------------------- NEW: one-time setup ----------------------
+    async def setup(self):
+        # Start networking and heartbeat already created in __init__
+        await self.start()
+        await self.node.wait_started()
+
+        # Try to bootstrap & discover peers, then wait for quorum
+        try:
+            await self.bootstrap_join()
+        except Exception:
+            pass
+
+        await self.wait_discovery(timeout_s=60.0)
+
+
+        # Install per-round sync routes once
+        self.node.route('RoundReady', self._on_round_ready)
+        self.node.route('CommDone',  self._on_comm_done)
+
+        # Fresh token sets for barriers
+        self._rr_tokens = set()
+        self._cd_tokens = set()
+
+        # Internal helpers
+        self._barrier_timeout_s = float(os.getenv("BARRIER_TIMEOUT_S", "20"))
+
+    # ---------------------- NEW: one round only ----------------------
+    async def run_round(self):
+        """Run exactly one ASILO round (no while-loop here)."""
+        # Align to slot boundary for this round (global lock-step)
+        await self._wait_for_round_slot(self.t_round)
+
+        if not self._epoch_set:
+            await self._start_gate.wait()
+            self._set_epoch_now()
+            self._epoch_set = True
+            print(f"[{self.id}] start gate passed; epoch aligned for round 0", flush=True)
+
+        # --- stop guards are enforced by the runner; keep them here as safety ---
+        if self.cfg.max_rounds is not None and self.t_round >= self.cfg.max_rounds:
+            return
+        if self.cfg.max_seconds is not None and (time.time() - self._t_start) >= self.cfg.max_seconds:
+            return
+
+        t0 = time.time()
+
+        # ===== verify persistence of last merge (intact) =====
+        vec_start = self._get_head_vector()
+        if self._last_merge_vec is not None and vec_start is not None:
+            cos_after_merge = float(np.dot(vec_start, self._last_merge_vec)
+                                    / ((np.linalg.norm(vec_start) + 1e-9) * (np.linalg.norm(self._last_merge_vec) + 1e-9)))
+            print(f"[{self.id}] START round={self.t_round} "
+                  f"head_norm_before_train={np.linalg.norm(vec_start):.6f} "
+                  f"cos_to_last_merge={cos_after_merge:.4f} "
+                  f"(last merge round={self._last_merge_round})", flush=True)
+            if cos_after_merge < 0.95:
+                print(f"[{self.id}] ⚠️ Model drifted since last merge! cos={cos_after_merge:.3f}", flush=True)
+        else:
+            print(f"[{self.id}] START round={self.t_round} "
+                  f"head_norm_before_train={0.0 if vec_start is None else np.linalg.norm(vec_start):.6f} "
+                  f"(no previous merge yet)", flush=True)
+
+        # ===== local step (unchanged) =====
+        self.trainer.fit_local(self.cfg.capability.local_batches)
+        curr_metrics = self.trainer.eval()
+        self._last_eval = curr_metrics
+
+        prev_metrics = getattr(self, "_prev_metrics", None)
+        u = 0.0
+        if self.t_round > 0 and prev_metrics is not None:
             u = self.trainer.compute_utility(prev_metrics, curr_metrics)
-            eps = self.cfg.u_eps
-            if abs(u) < eps:
-                u = 0.0
+            print(f"[{self.id}] round={self.t_round} local utility u={u:.6f} "
+                  f"metrics={curr_metrics}-{prev_metrics}", flush=True)
 
-            self._no_improve = 0 if u > eps else (self._no_improve + 1)
-            if self._no_improve in (50, 100, 200):  # escalate gently
-                self.trigger.cooldown_s *= 1.5
-            if self._no_improve >= 300:
-                print(f"[{self.id}] plateau reached; idling", flush=True)
-                await asyncio.sleep(5.0)
-                continue
+        eps = max(self.cfg.u_eps, 1e-6)
+        if abs(u) < eps:
+            u = 0.0
 
-            # pheromone update (EMA)
-            alpha = 0.2
+        self._no_improve = 0 if u > eps else (getattr(self, "_no_improve", 0) + 1)
+        if self._no_improve in (50, 100, 200):
+            self.trigger.cooldown_s *= 1.5
+        if self._no_improve >= 300:
+            print(f"[{self.id}] plateau reached; idling", flush=True)
+            await asyncio.sleep(5.0)
+            self._prev_metrics = curr_metrics
+            self.t_round += 1
+            return
+
+        # pheromone EMA + evaporation (unchanged)  :contentReference[oaicite:1]{index=1}
+        alpha = 0.2
+        if self.t_round > 0:
             self._p_local = (1 - alpha) * self._p_local + alpha * max(0.0, u)
             self.phero.update_self(self._p_local)
-
-            # evaporate
             self.phero.evaporate()
 
-            # ===== decide to speak =====
-            psi = curr_metrics.get("psi", u)
-            peers = self.phero.choose_peers(1)
-            best_peer_score = self.phero.score_of(peers[0]) if peers else 0.0
-            factor = self.cfg.speak_gate_factor
+        # ====== BARRIER A: RoundReady ======
+        await self._broadcast_all(RoundReady(agent_id=self.id, t=self.t_round))
+        await self._wait_barrier(self._rr_tokens, tag="RoundReady")
 
-            reason = None
-            if u <= eps:
-                reason = f"utility too small (u={u:.4f} ≤ eps={eps})"
-            elif not self.trigger.should_send(psi):
-                reason = f"trigger blocked (psi={psi:.3f})"
-            elif self._p_local < factor * (best_peer_score + 1e-6):
-                reason = f"pheromone gate failed (p_local={self._p_local:.4f}, best_peer={best_peer_score:.4f}, factor={factor})"
+        # ===== speak gate (unchanged core checks) =====
+        psi = curr_metrics.get("psi", u)
+        peers = self.phero.choose_peers(1)
+        best_peer_score = self.phero.score_of(peers[0]) if peers else 0.0
+        factor = self.cfg.speak_gate_factor
 
-            if reason:
-                print(f"[{self.id}] not sending this round → {reason}", flush=True)
+        reason = None
+        if u <= eps:
+            reason = f"utility too small (u={u:.4f} ≤ eps={eps})"
+        elif not self.trigger.should_send(psi):
+            reason = f"trigger blocked (psi={psi:.3f})"
+        elif self._p_local < factor * (best_peer_score + 1e-6):
+            reason = f"pheromone gate failed (p_local={self._p_local:.4f}, best_peer={best_peer_score:.4f}, factor={factor})"
+
+        if reason:
+            print(f"[{self.id}] not sending this round → {reason}", flush=True)
+        else:
+            payload, size = self._build_payload()
+            total_send = size * self.cfg.capability.k_peers
+            if total_send <= self.cfg.capability.max_bytes_round:
+                await self._broadcast_delta(payload, size)
+                self.bytes_sent += total_send
+                self.trigger.on_send(total_send)
+                print(f"[{self.id}] sending update (kind={payload.get('kind')} size={size} "
+                      f"to {self.cfg.capability.k_peers} peers)", flush=True)
             else:
-                payload, size = self._build_payload()
-                total_send = size * self.cfg.capability.k_peers
-                if total_send <= self.cfg.capability.max_bytes_round:
-                    await self._broadcast_delta(payload, size)
-                    self.bytes_sent += total_send
-                    self.trigger.on_send(total_send)
-                    print(f"[{self.id}] sending update (kind={payload.get('kind')} size={size} "
-                          f"to {self.cfg.capability.k_peers} peers)", flush=True)
-                else:
-                    print(f"[{self.id}]  payload too large (size={size}, "
-                          f"limit={self.cfg.capability.max_bytes_round})", flush=True)
+                print(f"[{self.id}]  payload too large (size={size}, "
+                      f"limit={self.cfg.capability.max_bytes_round})", flush=True)
 
-            # defaults each round
-            agg_count = 0
-            rolled_back = 0
+        agg_count = 0
+        rolled_back = 0
 
-            # ===== aggregate buffered heads every N rounds =====
-            if (self.t_round > 0) and (self.t_round % max(1, self.cfg.aggregate_every) == 0):
-                async with self._inbuf_lock:
-                    batch = self._incoming_heads[:]
-                    self._incoming_heads.clear()
+        # ====== BARRIER B: CommDone ======
+        await self._broadcast_all(CommDone(agent_id=self.id, t=self.t_round))
+        await self._wait_barrier(self._cd_tokens, tag="CommDone")
 
-                agg_count = len(batch)
-                agg = None
-                if batch:
-                    # snapshot before trying anything
-                    snap = self._snapshot_head()
-                    pre_eval = self._last_eval or self.trainer.eval()
+        # ===== aggregate buffered heads every N rounds (unchanged core) =====
+        if (self.t_round > 0) and (self.t_round % max(1, self.cfg.aggregate_every) == 0):
+            async with self._inbuf_lock:
+                batch = self._incoming_heads[:]
+                self._incoming_heads.clear()
 
-                    sids  = [sid for sid, _, _ in batch]
-                    vecs  = [v   for _,   v, _ in batch]
-                    bytes_each = [b for _,   _, b in batch]
+            agg_count, rolled_back = await self._aggregate_batch_if_any(batch)
 
-                    V = np.stack(vecs)  # [n, d]
-                    n = V.shape[0]
+        # ===== heartbeat & logging (unchanged) =====
+        if (self.t_round % 5) == 0:
+            await self._broadcast_pheromone(self._p_local)
 
-                    # ---- cosine gate ----
-                    m = V.mean(axis=0)
+        self.monitor.log(
+            self.t_round, self.bytes_sent, u, self.phero.get_self(),
+            curr_metrics.get("f1_val", 0.0),
+            agg_count=agg_count, rollback=rolled_back
+        )
 
-                    def _cos(a, b):
-                        na = np.linalg.norm(a) + 1e-9
-                        nb = np.linalg.norm(b) + 1e-9
-                        return float(np.dot(a, b) / (na * nb))
+        # progress and pacing
+        self._prev_metrics = curr_metrics
+        self.t_round += 1
 
-                    cos_th = float(getattr(self.cfg, "cos_gate_thresh", 0.2))
-                    kept_idx, dropped_idx = [], []
-                    for i in range(n):
-                        c = _cos(V[i], m)
-                        if c >= cos_th:
-                            kept_idx.append(i)
-                        else:
-                            dropped_idx.append(i)
+        dt = self.cfg.round_time_s - (time.time() - t0)
+        if self.t_round % 20 == 0:
+            f1 = curr_metrics.get("f1_val")
+            au = curr_metrics.get("auprc")
+            print(f"[{self.id}] r={self.t_round} psi={curr_metrics.get('psi'):.3f} "
+                  f"u={u:.4f} p_local={self._p_local:.4f} f1={f1:.3f} auprc={au:.3f} "
+                  f"bytes={self.bytes_sent}", flush=True)
+        if dt > 0:
+            await asyncio.sleep(dt)
 
-                    if kept_idx:
-                        Vf = V[kept_idx]
-                        kept_sids  = [sids[i] for i in kept_idx]
-                        kept_bytes = [bytes_each[i] for i in kept_idx]
-                    else:
-                        Vf = V
-                        kept_sids  = sids[:]
-                        kept_bytes = bytes_each[:]
-                        dropped_idx = []
+    # ---------------------- NEW: teardown ----------------------
+    async def teardown(self):
+        try:
+            await self.send_bye()
+        except Exception:
+            pass
+        try:
+            await self.shutdown()
+        except Exception:
+            pass
 
-                    dropped_sids  = [sids[i] for i in dropped_idx]
-                    dropped_bytes = [bytes_each[i] for i in dropped_idx]
+    # ---------------------- helpers extracted from old loop ----------------------
+    async def _broadcast_all(self, msg_obj):
+        for _, pi in self.neighbors.all_peers():
+            try:
+                await self.node.send(pi.host, pi.port, msg_obj)
+            except Exception:
+                pass
 
-                    print(f"[{self.id}] aggregate: batch={n} kept={len(kept_sids)} "
-                          f"dropped={len(dropped_sids)} (cos_th={cos_th})", flush=True)
+    def _dynamic_need(self) -> int:
+        # number of other currently live peers
+        live = self.neighbors.all_peers()
+        return max(0, len(live) - 1)
 
-                    # ---- robust aggregation ----
-                    def _safe_trimmed_mean(arr_list, trim_p: float = 0.1):
-                        A = np.stack(arr_list)
-                        N = A.shape[0]
-                        if N == 1:
-                            return A[0]
-                        k = int(trim_p * N)
-                        if k <= 0 or (2 * k) >= N:
-                            return A.mean(axis=0)
-                        A_sorted = np.sort(A, axis=0)
-                        return A_sorted[k:-k].mean(axis=0)
+    async def _wait_barrier(self, token_set: set[tuple[int, str]], tag: str):
+        deadline = time.time() + getattr(self, "_barrier_timeout_s", 20.0)
+        while True:
+            have = len({pid for (rt, pid) in token_set if rt == self.t_round})
+            need = self._dynamic_need()
+            if have >= need:
+                return
+            if time.time() >= deadline:
+                print(f"[{self.id}] {tag} barrier timeout: have={have} need={need} — continuing", flush=True)
+                return
+            await asyncio.sleep(0.05)
 
-                    mode   = getattr(self.cfg, "agg_mode", "trimmed")
-                    trim_p = float(getattr(self.cfg, "trim_p", 0.10))
+    async def _aggregate_batch_if_any(self, batch):
+        agg_count = len(batch)
+        rolled_back = 0
+        if not batch:
+            return 0, 0
 
-                    if mode == "median":
-                        X = np.stack(Vf)
-                        if X.shape[0] == 1:
-                            agg = X[0]
-                        else:
-                            # Weiszfeld geometric median
-                            m_est = X.mean(axis=0)
-                            for _ in range(50):
-                                d = np.linalg.norm(X - m_est, axis=1) + 1e-6
-                                w = 1.0 / d
-                                m_new = (X * w[:, None]).sum(axis=0) / w.sum()
-                                if np.linalg.norm(m_new - m_est) < 1e-6:
-                                    break
-                                m_est = m_new
-                            agg = m_est
-                    elif mode == "trimmed":
-                        agg = _safe_trimmed_mean([Vf[i] for i in range(Vf.shape[0])], trim_p=trim_p)
-                    else:  # "mean"
-                        agg = Vf.mean(axis=0)
+        snap = self._snapshot_head()
+        pre_eval = self._last_eval or self.trainer.eval()
 
-                    # DEBUG LOG BEFORE MERGE
-                    vec_before = self._get_head_vector()
-                    pre_metric = self._get_metric(pre_eval)
-                    print(f"[{self.id}] DEBUG before merge: round={self.t_round} metric={pre_metric:.4f} "
-                        f"head_norm={np.linalg.norm(vec_before):.6f}", flush=True)
-                    # ---- apply aggregate, evaluate, rollback if harmful ----
+        sids  = [sid for sid, _, _ in batch]
+        vecs  = [v   for _,   v, _ in batch]
+        bytes_each = [b for _,   _, b in batch]
 
-                    print(f"[{self.id}] merging {len(batch)} deltas → agg norm={np.linalg.norm(agg):.6f}", flush=True)
+        V = np.stack(vecs)
+        n = V.shape[0]
+        m = V.mean(axis=0)
 
-                    self._apply_head_vector(agg)
-                    # DEBUG LOG AFTER MERGE
-                    vec_after = self._get_head_vector()
-                    self._last_merge_vec = vec_after.copy()
-                    self._last_merge_round = self.t_round
-                    print(f"[{self.id}] stored merged vector for next round verification (round={self.t_round})", flush=True)
-                    post_eval = self.trainer.eval()
-                    post_metric = self._get_metric(post_eval)
-                    print(f"[{self.id}] DEBUG after merge:  round={self.t_round} metric={post_metric:.4f} "
-                        f"head_norm={np.linalg.norm(vec_after):.6f} "
-                        f"delta_norm={np.linalg.norm(vec_after - vec_before):.6f}", flush=True)
-                    #post_eval = self.trainer.eval()
+        def _cos(a, b):
+            na = np.linalg.norm(a) + 1e-9
+            nb = np.linalg.norm(b) + 1e-9
+            return float(np.dot(a, b) / (na * nb))
 
-                    pre_m  = self._get_metric(pre_eval)
-                    post_m = self._get_metric(post_eval)
-                    tol_abs, tol_rel = self._rollback_tols()
-                    harm = (post_m + 1e-12) < (pre_m - max(tol_abs, tol_rel * max(1e-12, pre_m)))
+        cos_th = float(getattr(self.cfg, "cos_gate_thresh", 0.2))
+        kept_idx, dropped_idx = [], []
+        for i in range(n):
+            if _cos(V[i], m) >= cos_th:
+                kept_idx.append(i)
+            else:
+                dropped_idx.append(i)
 
-                    if harm:
-                        self._restore_head(snap)
-                        rolled_back = 1
-                        self._last_eval = pre_eval
+        if kept_idx:
+            Vf = V[kept_idx]
+            kept_sids  = [sids[i] for i in kept_idx]
+            kept_bytes = [bytes_each[i] for i in kept_idx]
+        else:
+            Vf = V
+            kept_sids  = sids[:]
+            kept_bytes = bytes_each[:]
+            dropped_idx = []
 
-                        # penalize
-                        for sid, bsz in zip(dropped_sids, dropped_bytes):
-                            self.phero.deposit(sid, 0.0, max(1, bsz), reputation_badness=1.0)
-                        for sid, bsz in zip(kept_sids, kept_bytes):
-                            self.phero.deposit(sid, 0.0, max(1, bsz), reputation_badness=0.5)
+        dropped_sids  = [sids[i] for i in dropped_idx]
+        dropped_bytes = [bytes_each[i] for i in dropped_idx]
 
-                        print(f"[{self.id}] aggregate: ROLLBACK ({self._primary_metric_name()} "
-                              f"pre={pre_m:.3f} post={post_m:.3f} tol_abs={tol_abs} tol_rel={tol_rel})", flush=True)
-                    else:
-                        # keep & credit
-                        self._last_eval = post_eval
-                        delta_u = max(0.0, post_m - pre_m)
-                        if kept_sids:
-                            share = delta_u / len(kept_sids)
-                            u_cap = float(self.cfg.pheromone.u_max)
-                            for sid, bsz in zip(kept_sids, kept_bytes):
-                                du = min(share, u_cap)
-                                self.phero.deposit(sid, du, max(1, bsz), reputation_badness=0.0)
+        print(f"[{self.id}] aggregate: batch={n} kept={len(kept_sids)} "
+              f"dropped={len(dropped_sids)} (cos_th={cos_th})", flush=True)
 
-                        print(f"[{self.id}] aggregate: ACCEPT kept={kept_sids} "
-                              f"(k={len(kept_sids)}/{n}) mode={mode} trim_p={trim_p}", flush=True)
+        # robust aggregation modes preserved  :contentReference[oaicite:2]{index=2}
+        mode   = getattr(self.cfg, "agg_mode", "trimmed")
+        trim_p = float(getattr(self.cfg, "trim_p", 0.10))
+        if mode == "median":
+            X = np.stack(Vf)
+            if X.shape[0] == 1:
+                agg = X[0]
+            else:
+                m_est = X.mean(axis=0)
+                for _ in range(50):
+                    d = np.linalg.norm(X - m_est, axis=1) + 1e-6
+                    w = 1.0 / d
+                    m_new = (X * w[:, None]).sum(axis=0) / w.sum()
+                    if np.linalg.norm(m_new - m_est) < 1e-6:
+                        break
+                    m_est = m_new
+                agg = m_est
+        elif mode == "trimmed":
+            A = [Vf[i] for i in range(Vf.shape[0])]
+            # safe trimmed mean
+            k = int(trim_p * len(A))
+            if k <= 0 or (2*k) >= len(A):
+                agg = np.stack(A).mean(axis=0)
+            else:
+                A = np.sort(np.stack(A), axis=0)[k:-k]
+                agg = A.mean(axis=0)
+        else:
+            agg = Vf.mean(axis=0)
 
-            # ===== heartbeat & logging =====
-            if (self.t_round % 5) == 0:
-                await self._broadcast_pheromone(self._p_local)
+        vec_before = self._get_head_vector()
+        pre_m = self._get_metric(pre_eval)
+        print(f"[{self.id}] DEBUG before merge: round={self.t_round} metric={pre_m:.4f} "
+              f"head_norm={0.0 if vec_before is None else np.linalg.norm(vec_before):.6f}", flush=True)
 
-            self.monitor.log(
-                self.t_round, self.bytes_sent, u, self.phero.get_self(),
-                curr_metrics.get("f1_val", 0.0),
-                agg_count=agg_count, rollback=rolled_back
-            )
+        self._apply_head_vector(agg)
+        vec_after = self._get_head_vector()
+        self._last_merge_vec = None if vec_after is None else vec_after.copy()
+        self._last_merge_round = self.t_round
+        print(f"[{self.id}] stored merged vector for next round verification (round={self.t_round})", flush=True)
 
-            prev_metrics = curr_metrics
-            self.t_round += 1
+        post_eval = self.trainer.eval()
+        post_m = self._get_metric(post_eval)
+        print(f"[{self.id}] DEBUG after merge:  round={self.t_round} metric={post_m:.4f} "
+              f"head_norm={0.0 if vec_after is None else np.linalg.norm(vec_after):.6f} "
+              f"delta_norm={0.0 if (vec_after is None or vec_before is None) else np.linalg.norm(vec_after - vec_before):.6f}",
+              flush=True)
 
-            # pace rounds
-            dt = self.cfg.round_time_s - (time.time() - t0)
-            if self.t_round % 20 == 0:
-                f1 = curr_metrics.get("f1_val")
-                au = curr_metrics.get("auprc")
-                print(f"[{self.id}] r={self.t_round} psi={curr_metrics.get('psi'):.3f} "
-                      f"u={u:.4f} p_local={self._p_local:.4f} f1={f1:.3f} auprc={au:.3f} "
-                      f"bytes={self.bytes_sent}", flush=True)
-            if dt > 0:
-                await asyncio.sleep(dt)
+        tol_abs, tol_rel = self._rollback_tols()
+        harm = (post_m + 1e-12) < (pre_m - max(tol_abs, tol_rel * max(1e-12, pre_m)))
+
+        if harm:
+            self._restore_head(snap)
+            self._last_eval = pre_eval
+            rolled_back = 1
+            for sid, bsz in zip(dropped_sids, dropped_bytes):
+                self.phero.deposit(sid, 0.0, max(1, bsz), reputation_badness=1.0)
+            for sid, bsz in zip(kept_sids, kept_bytes):
+                self.phero.deposit(sid, 0.0, max(1, bsz), reputation_badness=0.5)
+            print(f"[{self.id}] aggregate: ROLLBACK ({self._primary_metric_name()} "
+                  f"pre={pre_m:.3f} post={post_m:.3f} tol_abs={tol_abs} tol_rel={tol_rel})", flush=True)
+        else:
+            self._last_eval = post_eval
+            delta_u = max(0.0, post_m - pre_m)
+            if kept_sids:
+                share = delta_u / len(kept_sids)
+                u_cap = float(self.cfg.pheromone.u_max)
+                for sid, bsz in zip(kept_sids, kept_bytes):
+                    du = min(share, u_cap)
+                    self.phero.deposit(sid, du, max(1, bsz), reputation_badness=0.0)
+            print(f"[{self.id}] aggregate: ACCEPT kept={kept_sids} "
+                  f"(k={len(kept_sids)}/{n}) mode={mode} trim_p={trim_p}", flush=True)
+
+        return agg_count, rolled_back
+
+    # ---------------------- compatibility shim (no while-loop) ----------------------
+    async def run_forever(self):
+        """Kept for compatibility but WITHOUT an internal while-loop."""
+        await self.setup()
+        # Do not loop here. The runner will call run_round() repeatedly.
+        return
+
+
+
 
     # ===================== messaging =====================
     async def _on_pheromone(self, msg: PheromoneMsg):
@@ -569,17 +712,31 @@ class Agent:
         return {"kind": "none", "reason": reason, "budget": budget}, 0
 
     async def _broadcast_delta(self, payload: Dict[str, Any], size: int):
-        for aid, peer in self.neighbors.topk(self.cfg.capability.k_peers):
+        # --- choose peers ---
+        if self.t_round < 3:                          # <-- first threeround?
+            peers = list(self.neighbors.all_peers())   # [(id, PeerInfo), ...]
+            random.shuffle(peers)
+            selected = peers[:self.cfg.capability.k_peers]
+        else:
+            selected = self.neighbors.topk(self.cfg.capability.k_peers)
+
+        # --- broadcast ---
+        for aid, peer in selected:
             msg = ModelDeltaMsg(
-                agent_id=self.id, t=self.t_round, model_id=self.cfg.model_id,
-                strategy=payload.get("kind", "unknown"), payload=payload, bytes_size=size
+                agent_id=self.id,
+                t=self.t_round,
+                model_id=self.cfg.model_id,
+                strategy=payload.get("kind", "unknown"),
+                payload=payload,
+                bytes_size=size,
             )
             print(f"[{self.id}] → sending delta(kind={payload.get('kind')} bytes={size}) "
-                  f"to {aid}@{peer.host}:{peer.port}", flush=True)
+                f"to {aid}@{peer.host}:{peer.port}", flush=True)
             try:
                 await self.node.send(peer.host, peer.port, msg)
             except Exception:
                 pass
+
 
     async def send_bye(self):
         b = Bye(agent_id=self.id)

@@ -24,25 +24,41 @@ class DeceFLConfig:
     round_time_s: float = 0.1
     max_rounds: int = 200
     is_server: bool = False
+    exp_name: str = "decefl"
+    agg_mode: str = "weighted"   # "weighted" (mean) or "median"
 
 def coord_median(stack: np.ndarray) -> np.ndarray:
-    """Coordinate-wise median (robust aggregation)."""
-    # stack: (n_clients, D)
     return np.median(stack, axis=0)
 
+def weighted_mean(stack: np.ndarray, w: np.ndarray | None = None) -> np.ndarray:
+    if w is None:  # simple mean by default
+        return np.mean(stack, axis=0)
+    w = np.asarray(w, dtype=np.float64)
+    w = w / (np.sum(w) + 1e-12)
+    return (stack * w[:, None]).sum(axis=0)
+
 class DeceFLAgent:
+    """
+    Decentralized, round-synchronous DeceFL:
+    - Orchestrator calls run_one_round() each round (no internal while-loop).
+    - Each round: local fit -> send to K peers -> bounded wait -> aggregate only same-round messages.
+    - Inbox bucketed by msg.t to avoid cross-round mixing.
+    """
     def __init__(self, cfg: DeceFLConfig, trainer: LocalTrainer, role: str, peers: Dict[str, Tuple[str,int]]):
         self.cfg = cfg
         self.trainer = trainer
         self.node = P2PNode(cfg.host, cfg.port)
         self.id = cfg.agent_id
-        self.is_server = cfg.is_server or (role == "server")
         self.role = role
-        self.monitor = CSVMonitor(cfg.agent_id, exp_name="decefl")
+        self.is_server = cfg.is_server
+        self.monitor = CSVMonitor(cfg.agent_id, exp_name=cfg.exp_name)
+
+        self.peers: Dict[str, Tuple[str,int]] = peers
         self.round = 0
-        self.updates: List[np.ndarray] = []   # server only
-        self.peers = peers
         self.bytes_sent = 0
+
+        # round_id -> List[np.ndarray]
+        self.inbox: Dict[int, List[np.ndarray]] = {}
 
         self.node.route("ModelDeltaMsg", self._on_model_delta)
         self.node.route("Join", self._on_join)
@@ -50,95 +66,109 @@ class DeceFLAgent:
 
     async def start(self):
         await self.node.start()
-        if not self.is_server:
-            for aid, (host, port) in self.peers.items():
-                j = Join(agent_id=self.id, host=self.cfg.host, port=self.cfg.port, capability="DeceFL")
-                await self.node.send(host, port, j)
+        # lightweight handshake
+        j = Join(agent_id=self.id, host=self.cfg.host, port=self.cfg.port, capability="DeceFL")
+        for _, (h, p) in self.peers.items():
+            await self.node.send(h, p, j)
+
+    async def shutdown(self):
+        stop = getattr(self.node, "stop", None)
+        if callable(stop): await stop()
 
     async def run_forever(self):
+        """Deprecated: kept for compatibility; no loop here."""
         await self.start()
-        while self.round < self.cfg.max_rounds:
-            t0 = time.time()
-            # 🔹 Add this block right here
-            if self.is_server:
-                vec, _ = self._get_weights()
-                if vec is not None:
-                    print(f"[{self.id}] START round={self.round} "
-                        f"head_norm_before_train={np.linalg.norm(vec):.6f}", flush=True)
-                else:
-                    print(f"[{self.id}] START round={self.round} no weights found", flush=True)
-            # 🔹 End of insertion
-            # local train + eval
-            self.trainer.fit_local(5)
-            metrics = self.trainer.eval()
 
-            if not self.is_server:
-                weights, size = self._get_weights()
-                if weights is not None:
-                    payload = {"weights": weights.tolist()}
-                    msg = ModelDeltaMsg(agent_id=self.id, t=self.round, model_id=self.cfg.model_id,
-                                        strategy="decefl", payload=payload, bytes_size=size)
-                    # send to server
-                    for aid, (host, port) in self.peers.items():
-                        await self.node.send(host, port, msg)
-                        self.bytes_sent += size
-                        print(f"[{self.id}] SENT update → size={size} bytes, norm={np.linalg.norm(weights):.6f}, round={self.round}", flush=True)
+    # --- inside class DeceFLAgent ---
 
-            else:
-                # robust aggregate if we have updates
-                if self.updates:
-                    stack = np.stack(self.updates, axis=0)
-                    print(f"[{self.id}] AGGREGATING {len(self.updates)} updates (shape={stack.shape}) "
-                        f"stack_norms={[float(np.linalg.norm(u)) for u in self.updates]}", flush=True)
-                    agg = coord_median(stack)
-                    print(f"[{self.id}] AGG median_norm={np.linalg.norm(agg):.6f}", flush=True)
+    def _desired_min_incoming(self) -> int:
+        # OLD: return max(1, min(len(self.peers), (len(self.peers)+1)//2))
+        # NEW: aim to use ALL available neighbors this round
+        return max(1, len(self.peers))
 
-                    # before–after model check
-                    before_vec, _ = self._get_weights()
-                    before_norm = np.linalg.norm(before_vec) if before_vec is not None else 0.0
-                    self._set_weights(agg)
-                    after_vec, _ = self._get_weights()
-                    after_norm = np.linalg.norm(after_vec) if after_vec is not None else 0.0
-                    delta_norm = np.linalg.norm(after_vec - before_vec) if (before_vec is not None and after_vec is not None) else 0.0
-                    print(f"[{self.id}] SERVER MERGE: before_norm={before_norm:.6f}, after_norm={after_norm:.6f}, "
-                        f"delta_norm={delta_norm:.6f}, round={self.round}", flush=True)
+    async def run_one_round(self, local_epochs: int = 5, wait_timeout_s: float = 1.0, grace_s: float = 0.15):
+        t0 = time.time()
 
-                    self.updates.clear()
+        self.trainer.fit_local(local_epochs)
+        metrics = self.trainer.eval()
+
+        weights, size = self._get_weights()
+        if weights is not None and self.peers:
+            payload = {"weights": weights.tolist()}
+            msg = ModelDeltaMsg(agent_id=self.id, t=self.round, model_id=self.cfg.model_id,
+                                strategy="decefl", payload=payload, bytes_size=int(size))
+            for _, (h, p) in self.peers.items():
+                await self.node.send(h, p, msg)
+                self.bytes_sent += int(size)
+            print(f"[{self.id}] SENT r={self.round} -> K={len(self.peers)} size={size} norm={np.linalg.norm(weights):.6f}", flush=True)
+
+        # Wait for ALL peers or until timeout
+        target = self._desired_min_incoming()
+        await self._await_round_updates(self.round, min_count=target, timeout_s=wait_timeout_s)
+
+        # Grace window to catch stragglers
+        if grace_s > 0:
+            await asyncio.sleep(grace_s)
+
+        # Aggregate what we have for THIS round
+        buf = self.inbox.pop(self.round, [])
+        got = len(buf)
+        k = len(self.peers)
+        late_key = f"_late_drop_r{self.round}"
+        late = len(self.inbox.get(self.round, []))  # anything that slipped in during merge prints
+        if got == 0:
+            print(f"[{self.id}] WARN: no peer updates for r={self.round}", flush=True)
+        else:
+            stack = np.stack(buf, axis=0)
+            agg = coord_median(stack) if self.cfg.agg_mode.lower() == "median" else weighted_mean(stack)
+            before_vec, _ = self._get_weights()
+            self._set_weights(agg)
+            after_vec, _ = self._get_weights()
+            norms = [float(np.linalg.norm(u)) for u in buf]
+            print(f"[{self.id}] AGG r={self.round} n={got}/{k} norms={norms} mode={self.cfg.agg_mode}", flush=True)
+            if late:
+                # make it explicit that we are dropping stale messages for this round
+                print(f"[{self.id}] NOTE: dropping {late} late arrivals for r={self.round}", flush=True)
+                self.inbox.pop(self.round, None)
+
+        self.monitor.log(self.round, self.bytes_sent, 0.0, 0.0, metrics.get("f1_val", 0.0))
+        self.round += 1
+
+        dt = self.cfg.round_time_s - (time.time() - t0)
+        if dt > 0: await asyncio.sleep(dt)
+
+    async def _await_round_updates(self, round_id: int, min_count: int, timeout_s: float):
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        while time.monotonic() < deadline:
+            if len(self.inbox.get(round_id, [])) >= min_count:
+                break
+            await asyncio.sleep(0.01)
 
 
-            # keep CSV schema compatible with ASILO plotting
-            self.monitor.log(self.round, self.bytes_sent, 0.0, 0.0, metrics.get("f1_val", 0.0))
-
-            self.round += 1
-            dt = self.cfg.round_time_s - (time.time() - t0)
-            if dt > 0:
-                await asyncio.sleep(dt)
-
+    # ---------- handlers ---------- #
     async def _on_model_delta(self, msg: ModelDeltaMsg):
-        if self.is_server:
-            w = msg.payload.get("weights", None)
-            if w is None:
-                return
-            arr = np.asarray(w, dtype=np.float32)
-            self.updates.append(arr)
-            self.bytes_sent += int(msg.bytes_size or 0)
-            print(f"[{self.id}] RECEIVED update from {msg.agent_id} "
-      f"(size={arr.size}, norm={np.linalg.norm(arr):.6f}, total_buffered={len(self.updates)})", flush=True)
-
+        r = int(getattr(msg, "t", -1))
+        w = msg.payload.get("weights", None)
+        if w is None or r < 0:
+            return
+        arr = np.asarray(w, dtype=np.float32)
+        self.inbox.setdefault(r, []).append(arr)
+        print(f"[{self.id}] RECEIVED from {msg.agent_id} r={r} size={arr.size} norm={np.linalg.norm(arr):.6f} (buf_r={len(self.inbox[r])})", flush=True)
 
     async def _on_join(self, msg: Join):
-        if self.is_server:
-            peers = [(self.id, self.cfg.host, self.cfg.port, "server")]
-            await self.node.send(msg.host, msg.port, Welcome(peers=peers))
+        try:
+            await self.node.send(msg.host, msg.port, Welcome(peers=[(self.id, self.cfg.host, self.cfg.port, self.role)]))
+        except Exception:
+            pass
 
     async def _on_welcome(self, msg: Welcome):
         return
 
+    # ---------- weight helpers ---------- #
     @staticmethod
     def _find_linear_head_torch(model):
         if nn is None:
             return None
-        # Try common classifier heads first
         def _get(root, path: str):
             cur = root
             for part in path.split("."):
@@ -154,21 +184,20 @@ class DeceFLAgent:
                 for sub in m.modules():
                     if isinstance(sub, nn.Linear): last = sub
                 if last is not None: return last
-        # Fallback: last Linear anywhere
         last = None
         for m in getattr(model, "modules", lambda: [])():
             if isinstance(m, nn.Linear): last = m
         return last
 
     def _get_weights(self):
-        # ---- sklearn path ----
+        # sklearn
         coef = getattr(self.trainer.model, "coef_", None)
         inter = getattr(self.trainer.model, "intercept_", None)
         if coef is not None and inter is not None:
             vec = np.concatenate([np.ravel(coef), np.ravel(np.atleast_1d(inter))]).astype(np.float32)
             return vec, int(vec.nbytes)
 
-        # ---- torch path ----
+        # torch
         if torch is not None and isinstance(getattr(self.trainer, "model", None), nn.Module):
             head = self._find_linear_head_torch(self.trainer.model)
             if head is None or getattr(head, "weight", None) is None:
@@ -182,7 +211,7 @@ class DeceFLAgent:
         return None, 0
 
     def _set_weights(self, vec: np.ndarray):
-        # ---- sklearn path ----
+        # sklearn
         coef = getattr(self.trainer.model, "coef_", None)
         inter = getattr(self.trainer.model, "intercept_", None)
         if coef is not None and inter is not None:
@@ -191,7 +220,7 @@ class DeceFLAgent:
             self.trainer.model.intercept_ = vec[csz:]
             return
 
-        # ---- torch path ----
+        # torch
         if torch is not None and isinstance(getattr(self.trainer, "model", None), nn.Module):
             head = self._find_linear_head_torch(self.trainer.model)
             if head is None or getattr(head, "weight", None) is None:

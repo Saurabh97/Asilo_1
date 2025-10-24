@@ -1,0 +1,33 @@
+matrix:
+  blocks:
+    - name: homogeneous
+      rounds: 50
+      repetitions: 1
+      seeds: [1,2,3,4,5,6,7,8,9,10]
+      methods: [ASILO, FedAvg, DFedSAM, DeceFL]
+      config_map:
+        ASILO: experiments/configs/robustness/asilo_homo.yaml
+        FedAvg: experiments/configs/wesad_fedavg.yaml
+        DFedSAM: experiments/configs/wesad_dfedsam.yaml
+        DeceFL: experiments/configs/wesad_decefl.yaml
+
+    - name: heterogeneous
+      rounds: 50
+      repetitions: 1
+      capability_seed: 4
+      seeds: [11,12,13,14,15,16,17,18,19,20]
+      #seeds: [11,12,13,14,15,16,17,18]
+      methods: [ASILO, FedAvg, DFedSAM, DeceFL]
+      hetero_configs:
+        - label: fast25
+          config_map:
+            ASILO: experiments/configs/robustness/asilo_fast25.yaml
+            FedAvg: experiments/configs/wesad_fedavg.yaml
+            DFedSAM: experiments/configs/wesad_dfedsam.yaml
+            DeceFL: experiments/configs/wesad_decefl.yaml
+        - label: fast50
+          config_map:
+            ASILO: experiments/configs/robustness/asilo_fast50.yaml
+            FedAvg: experiments/configs/wesad_fedavg.yaml
+            DFedSAM: experiments/configs/wesad_dfedsam.yaml
+            DeceFL: experiments/configs/wesad_decefl.yaml

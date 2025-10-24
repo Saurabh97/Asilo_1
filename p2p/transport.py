@@ -25,6 +25,14 @@ class P2PNode:
         self._client_tasks.add(task)
         task.add_done_callback(lambda t: self._client_tasks.discard(t))
 
+    async def wait_ready(self):
+        await self._ready.wait()
+
+    # ADD THIS METHOD ↓↓↓
+    async def wait_started(self):
+        # alias expected by base_agent.py
+        await self._ready.wait()
+
     # ---- per-connection loop ----
     async def _on_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
