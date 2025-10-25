@@ -125,7 +125,7 @@ class DeceFLAgent:
             self._set_weights(agg)
             after_vec, _ = self._get_weights()
             norms = [float(np.linalg.norm(u)) for u in buf]
-            print(f"[{self.id}] AGG r={self.round} n={got}/{k} norms={norms} mode={self.cfg.agg_mode}", flush=True)
+            print(f"[{self.id}] AGG r={self.round} n={got}/{k} norms={norms} mode={self.cfg.agg_mode} before={before_vec} after={after_vec}", flush=True)
             if late:
                 # make it explicit that we are dropping stale messages for this round
                 print(f"[{self.id}] NOTE: dropping {late} late arrivals for r={self.round}", flush=True)

@@ -3,7 +3,7 @@ import glob, os
 import pandas as pd
 import matplotlib.pyplot as plt
 
-LOG_DIR = "logs/asilo"
+LOG_DIR = "logs/single_test_seed42"
 OUT_DIR = "artifacts"
 os.makedirs(OUT_DIR, exist_ok=True)
 

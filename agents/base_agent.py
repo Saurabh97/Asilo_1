@@ -769,20 +769,73 @@ class Agent:
 
 
 
+    def _apply_head_vector(self, vec: np.ndarray):
+        # Dispatch so existing call sites work
+        return self._apply_head_vector_avg(vec)
+
     def _apply_head_vector_avg(self, vec: np.ndarray):
+        """
+        Average current head vector with `vec` and write back.
+        Supports sklearn (coef_/intercept_) and torch Linear head.
+        """
+        cur = self._get_head_vector()
+        if cur is None:
+            print(f"[{self.id}] _apply_head_vector_avg: current head is None → no-op", flush=True)
+            return
+        if not isinstance(vec, np.ndarray):
+            vec = np.asarray(vec)
+        if cur.shape != vec.shape:
+            print(f"[{self.id}] _apply_head_vector_avg: shape mismatch cur={cur.shape} vec={vec.shape} → no-op", flush=True)
+            return
+
+        merged = (cur.astype(np.float64) + vec.astype(np.float64)) / 2.0  # stable avg
+
+        # --- sklearn path ---
         coef = getattr(self.trainer.model, "coef_", None)
         inter = getattr(self.trainer.model, "intercept_", None)
-        if coef is None or inter is None:
+        if coef is not None and inter is not None:
+            csz = coef.size
+            new_coef = merged[:csz].reshape(coef.shape).astype(coef.dtype, copy=False)
+            new_inter = merged[csz:].reshape(inter.shape).astype(inter.dtype, copy=False)
+            self.trainer.model.coef_ = new_coef
+            self.trainer.model.intercept_ = new_inter
+
+            # optional verification print
+            after = self._get_head_vector()
+            dn = float(np.linalg.norm(after - cur)) if after is not None else float("nan")
+            print(f"[{self.id}] _apply_head_vector_avg (sklearn): Δ‖w‖={dn:.6e}", flush=True)
             return
-        cur = self._get_head_vector()
-        if cur is None or cur.shape != vec.shape:
+
+        # --- torch path (final Linear head only) ---
+        try:
+            import torch
+            from Asilo_1.fl.artifacts.head_delta import _find_linear_head_torch
+            head = _find_linear_head_torch(self.trainer.model)
+            if head is None or not hasattr(head, "weight"):
+                print(f"[{self.id}] _apply_head_vector_avg: torch head not found → no-op", flush=True)
+                return
+
+            with torch.no_grad():
+                w_num = head.weight.numel()
+                W = merged[:w_num].reshape(tuple(head.weight.shape))
+                device = head.weight.device
+                head.weight.copy_(torch.from_numpy(W).to(device=device, dtype=head.weight.dtype))
+
+                b_has = getattr(head, "bias", None) is not None
+                if b_has:
+                    b_num = head.bias.numel()
+                    B = merged[w_num:w_num + b_num].reshape(tuple(head.bias.shape))
+                    head.bias.copy_(torch.from_numpy(B).to(device=device, dtype=head.bias.dtype))
+
+            # optional verification print
+            after = self._get_head_vector()
+            dn = float(np.linalg.norm(after - cur)) if after is not None else float("nan")
+            print(f"[{self.id}] _apply_head_vector_avg (torch): Δ‖w‖={dn:.6e}", flush=True)
             return
-        merged = (cur + vec) / 2.0
-        csz = coef.size
-        new_coef = merged[:csz].reshape(coef.shape)
-        new_inter = merged[csz:]
-        self.trainer.model.coef_ = new_coef
-        self.trainer.model.intercept_ = new_inter
+        except Exception as e:
+            print(f"[{self.id}] _apply_head_vector_avg torch apply failed: {e}", flush=True)
+            return
+
 
     def _snapshot_head(self):
         coef = getattr(self.trainer.model, "coef_", None)
@@ -797,18 +850,6 @@ class Agent:
         coef, inter = snap
         self.trainer.model.coef_ = coef
         self.trainer.model.intercept_ = inter
-
-    def _apply_head_vector(self, vec: np.ndarray):
-        coef = getattr(self.trainer.model, "coef_", None)
-        inter = getattr(self.trainer.model, "intercept_", None)
-        if coef is None or inter is None:
-            return
-        total = coef.size + np.atleast_1d(inter).size
-        if vec.size != total:
-            return
-        csz = coef.size
-        self.trainer.model.coef_ = vec[:csz].reshape(coef.shape)
-        self.trainer.model.intercept_ = vec[csz:]
 
     # ---- metric / rollback helpers ----
     def _primary_metric_name(self) -> str:
