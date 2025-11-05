@@ -1,0 +1,10 @@
+{
+  "exp_name": "heterogeneous_fast25_asilo_seed16",
+  "block": "heterogeneous",
+  "label": "fast25",
+  "method": "ASILO",
+  "seed": 16,
+  "rounds": 50,
+  "status": "ok",
+  "ts": 1761538377
+}

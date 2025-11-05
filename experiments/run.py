@@ -160,7 +160,7 @@ async def main(cfg_path: str):
 
     _exp = known.exp if known.exp else "asilo"
     if _seed is not None:
-        _exp = f"{_exp}_seed{_seed}"
+        _exp = f"{_exp}"
     os.environ["EXP_NAME"] = _exp
 
     # ===== objects from cfg =====

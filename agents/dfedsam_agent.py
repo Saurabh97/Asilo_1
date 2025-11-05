@@ -45,6 +45,9 @@ class DFedSAMOrchestrator:
         # routes
         self.node.route("Join", self._on_join)
         self.node.route("ModelDeltaMsg", self._on_model_delta)
+        # add near: self.eps = float(eps)
+        exp_name = os.environ.get("EXP_NAME", "dfedsam")
+        self.monitor = CSVMonitor(self.id, exp_name)  # new
 
     async def start(self):
         await self.node.start()
@@ -76,16 +79,23 @@ class DFedSAMOrchestrator:
         f1 = float(msg.payload.get("f1_val", 0.0))
         n = int(msg.payload.get("num_samples", 0))
         deg = bool(msg.payload.get("degenerate_val", False))
-
+        # NEW: remember sender id + bytes for decision logging later
+        sender = msg.agent_id
+        bytes_sz = int(getattr(msg, "bytes_size", 0))
         # Accept client hints and auto-derive degeneracy if necessary
         if not deg:
             val_size = int(msg.payload.get("val_size", 0))
             if val_size > 0 and abs(f1 - 1.0) < 1e-9:
                 deg = True
 
-        self._buf.setdefault(r, []).append({"vec": arr, "n": n, "deg": deg})
+        self._buf.setdefault(r, []).append({"vec": arr, "n": n, "deg": deg, "from": sender, "bytes": bytes_sz})
         self._f1.setdefault(r, []).append(f1)
-
+        # NEW: edge log (client → orchestrator recv)
+        try:
+            self.monitor.log_edge(t=r, src=sender, dst=self.id, bytes_sz=bytes_sz,
+                                kind="model_delta", action="recv")
+        except Exception:
+            pass
         print(
             f"[{self.id}] RECV r={r} from {msg.agent_id} size={arr.size} "
             f"norm={np.linalg.norm(arr):.6f} f1={f1:.4f} n={n} deg={deg} "
@@ -144,7 +154,22 @@ class DFedSAMOrchestrator:
 
         agg = np.tensordot(w, stack, axes=(0, 0))
         print(f"[{self.id}] AGG r={round_idx} k={len(triplets)} mode={mode} agg_norm={float(np.linalg.norm(agg)):.6f}", flush=True)
-
+        # NEW: log per-update aggregation decisions
+        for i, t in enumerate(triplets):
+            try:
+                self.monitor.log_agg_decision(
+                    t=round_idx,
+                    agent=self.id,
+                    from_id=t.get("from", "?"),
+                    bytes_sz=int(t.get("bytes", 0)),
+                    decision="keep",        # change to "drop" if you add trimming
+                    cos_thresh=0.0,         # fill in if you add cosine gating later
+                    mode=mode,              # e.g., "dfedsam_smooth*n" or "uniform"
+                    trim_p=0.0,             # % trimmed if you add robust trimming
+                    rolled_back=0           # 1 if you implement rollback on this delta
+                )
+            except Exception:
+                pass
         # broadcast
         payload = {"weights": agg.tolist()}
         bmsg = ModelDeltaMsg(agent_id=self.id, t=round_idx, model_id=self.model_id,
@@ -155,6 +180,12 @@ class DFedSAMOrchestrator:
                 continue
             await self.node.send(h, p, bmsg)
             print(f"[{self.id}] BROADCAST dfedsam-agg → {cid}@{h}:{p} size={bmsg.bytes_size}", flush=True)
+            # NEW: edge log (orchestrator → client send)
+            try:
+                self.monitor.log_edge(t=round_idx, src=self.id, dst=cid, bytes_sz=int(bmsg.bytes_size),
+                                    kind="agg", action="send")
+            except Exception:
+                pass
 
 
 # ======================
@@ -264,6 +295,12 @@ class DFedSAMClientAgent:
                                 strategy="dfedsam-local", payload=payload, bytes_size=int(nbytes))
             await self.node.send(self._orch_host, self._orch_port, msg)
             self.bytes_sent += int(nbytes)
+            # NEW: edge log (client → orchestrator send)
+            try:
+                self.monitor.log_edge(t=round_idx, src=self.id, dst=self._orch_id, bytes_sz=int(nbytes),
+                                    kind="model_delta", action="send")
+            except Exception:
+                pass
             print(f"[{self.id}] SENT dfedsam-local → {self._orch_id}@{self._orch_host}:{self._orch_port} "
                   f"size={nbytes}, norm={np.linalg.norm(head):.6f}, f1={f1:.4f}, n={num_samples}, "
                   f"deg_val={degenerate_val}, r={round_idx}", flush=True)
@@ -289,6 +326,14 @@ class DFedSAMClientAgent:
         vec = np.asarray(w, dtype=np.float32)
         self._set_head_vector(vec)
         print(f"[{self.id}] APPLIED dfedsam-agg r={msg.t} (size={vec.size}, norm={np.linalg.norm(vec):.6f})", flush=True)
+        # NEW: edge log (orchestrator → client recv)
+        try:
+            # we don’t have msg.bytes_size on recv unless upstream populates it; guard with getattr.
+            self.monitor.log_edge(t=int(msg.t), src=msg.agent_id, dst=self.id,
+                                bytes_sz=int(getattr(msg, "bytes_size", 0)),
+                                kind="agg", action="recv")
+        except Exception:
+            pass
         # release per-round barrier
         evt = self._agg_events.setdefault(int(msg.t), asyncio.Event())
         if not evt.is_set():

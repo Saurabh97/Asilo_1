@@ -114,7 +114,8 @@ class Agent:
             try:
                 await self.node.send(pi.host, pi.port, msg_obj)
             except Exception:
-                pass       
+                pass  
+     
     async def _on_round_ready(self, msg: RoundReady):
         if msg.t == self.t_round:  # only for our current round
             self._rr_tokens.add((msg.t, msg.agent_id))
@@ -315,7 +316,15 @@ class Agent:
             curr_metrics.get("f1_val", 0.0),
             agg_count=agg_count, rollback=rolled_back
         )
-
+        # telemetry: pheromone snapshot for all known peers (this agent's view)
+        try:
+            for pid, st in self.phero.table.items():
+                score = self.phero.score_of(pid)
+                contacts = getattr(st, 'contacts', 0)
+                rep = getattr(st, 'reputation', 0.0)
+                self.monitor.log_pheromone(self.t_round, self.id, pid, st.tau, score, contacts, rep, self.phero.get_self())
+        except Exception:
+            pass
         # progress and pacing
         self._prev_metrics = curr_metrics
         self.t_round += 1
@@ -342,13 +351,6 @@ class Agent:
             pass
 
     # ---------------------- helpers extracted from old loop ----------------------
-    async def _broadcast_all(self, msg_obj):
-        for _, pi in self.neighbors.all_peers():
-            try:
-                await self.node.send(pi.host, pi.port, msg_obj)
-            except Exception:
-                pass
-
     def _dynamic_need(self) -> int:
         # number of other currently live peers
         live = self.neighbors.all_peers()
@@ -483,7 +485,16 @@ class Agent:
                     self.phero.deposit(sid, du, max(1, bsz), reputation_badness=0.0)
             print(f"[{self.id}] aggregate: ACCEPT kept={kept_sids} "
                   f"(k={len(kept_sids)}/{n}) mode={mode} trim_p={trim_p}", flush=True)
-
+        # telemetry: aggregation classification per sender
+        try:
+            for sid, bsz in zip(kept_sids, kept_bytes):
+                self.monitor.log_agg_decision(self.t_round, self.id, sid, bsz,
+                                              'accepted_in_agg', cos_th, mode, trim_p, rolled_back)
+            for sid, bsz in zip(dropped_sids, dropped_bytes):
+                self.monitor.log_agg_decision(self.t_round, self.id, sid, bsz,
+                                              'dropped_in_agg', cos_th, mode, trim_p, rolled_back)
+        except Exception:
+            pass
         return agg_count, rolled_back
 
     # ---------------------- compatibility shim (no while-loop) ----------------------
@@ -501,99 +512,97 @@ class Agent:
         self.neighbors.update_pheromone(msg.agent_id, msg.p)
 
     async def _on_model_delta(self, msg: ModelDeltaMsg):
+        # ---- NEW: log a plain receive event so edges.csv has 'received' ----
+        try:
+            self.monitor.log_edge(self.t_round, msg.agent_id, self.id, msg.bytes_size,
+                                msg.payload.get('kind', 'unknown'), 'received', None, '')
+        except Exception:
+            pass
+
         print(f"[{self.id}] RECEIVED delta(kind={msg.payload.get('kind')} bytes={msg.bytes_size}) "
-          f"from {msg.agent_id}", flush=True)
-        print(f"[{self.id}] model_id mismatch: {msg.model_id} != {self.cfg.model_id}", flush=True)
+            f"from {msg.agent_id}", flush=True)
+
         if msg.model_id != self.cfg.model_id:
+            print(f"[{self.id}] model_id mismatch: {msg.model_id} != {self.cfg.model_id}", flush=True)
             return
-        print(f"[{self.id}] after if model_id mismatch: {msg.model_id} != {self.cfg.model_id}", flush=True)
-        # HEAD payload
+
+        # ============== HEAD payload ==============
         if msg.payload.get("kind") == "head":
             try:
                 if "npz" in msg.payload:
-                    # sklearn-style model (coef_ + intercept_)
                     arr = np.load(io.BytesIO(msg.payload["npz"]), allow_pickle=False)
                     keys = [k for k in arr.keys() if k not in ("_kind", "kind", "alpha")]
-
-                    # Try sklearn-style
                     if "coef" in keys and "intercept" in keys:
                         vec_in = np.concatenate([arr["coef"].ravel(), arr["intercept"].ravel()]).astype(np.float32)
-                    # Try torch-style
                     elif "weight" in keys:
                         parts = [arr["weight"].ravel()]
-                        if "bias" in keys:
-                            parts.append(arr["bias"].ravel())
+                        if "bias" in keys: parts.append(arr["bias"].ravel())
                         vec_in = np.concatenate(parts).astype(np.float32)
                     else:
-                        # generic numeric flatten, ignoring string arrays
-                        parts = []
-                        for k in keys:
-                            if arr[k].dtype.kind not in {"U", "S", "O"}:  # skip string/object fields
-                                parts.append(arr[k].ravel())
+                        parts = [arr[k].ravel() for k in keys if arr[k].dtype.kind not in {"U","S","O"}]
                         vec_in = np.concatenate(parts).astype(np.float32)
 
-                    print(f"[{self.id}] loaded HEAD from {msg.agent_id} (keys={keys}, vec_norm={np.linalg.norm(vec_in):.6f})", flush=True)
-
                 elif "state_dict" in msg.payload:
-                    # pytorch-style model delta
                     import torch
-                    state_dict_bytes = io.BytesIO(msg.payload["state_dict"])
-                    state_dict = torch.load(state_dict_bytes, map_location="cpu")
-                    flat_params = []
-                    for v in state_dict.values():
-                        flat_params.append(v.cpu().numpy().ravel())
-                    vec_in = np.concatenate(flat_params).astype(np.float32)
+                    state_dict = torch.load(io.BytesIO(msg.payload["state_dict"]), map_location="cpu")
+                    flat = [v.cpu().numpy().ravel() for v in state_dict.values()]
+                    vec_in = np.concatenate(flat).astype(np.float32)
                 else:
                     raise ValueError("Unsupported head payload format")
-
-                print(f"[{self.id}] loaded HEAD from {msg.agent_id} (vec_in norm={np.linalg.norm(vec_in):.6f})", flush=True)
 
             except Exception as e:
                 print(f"[{self.id}] failed to parse HEAD from {msg.agent_id}: {e!r}", flush=True)
                 self.phero.deposit(msg.agent_id, 0.0, max(1, msg.bytes_size), reputation_badness=1.0)
                 return
 
-
-            # cosine gate vs our current head
             vec_cur = self._get_head_vector()
+            # shape mismatch → buffer but mark reason
             if vec_cur is None or vec_in is None or vec_cur.shape != vec_in.shape:
-                print(f"[{self.id}] skipped cosine check: shape mismatch "
-                    f"{None if vec_cur is None else vec_cur.shape} vs {vec_in.shape}", flush=True)
+                try:
+                    self.monitor.log_edge(self.t_round, msg.agent_id, self.id, msg.bytes_size,
+                                        'head', 'buffered_no_cos', None, 'shape_mismatch_or_missing')
+                except Exception:
+                    pass
                 async with self._inbuf_lock:
                     self._incoming_heads.append((msg.agent_id, vec_in, msg.bytes_size))
                 return
-            if vec_cur is not None:
-                cos = cosine_similarity(vec_cur, vec_in)
-                print(f"[{self.id}] cosine check vs {msg.agent_id}: cos={cos:.4f}", flush=True)
-                if cos < self.cfg.cos_gate_thresh:
-                    print(f"[{self.id}] DROPPED delta from {msg.agent_id} (cos={cos:.4f} < {self.cfg.cos_gate_thresh})", flush=True)
-                    self.phero.deposit(msg.agent_id, 0.0, max(1, msg.bytes_size), reputation_badness=1.0)
-                    return
 
-            # buffer for aggregation
+            # cosine gate vs current head
+            cos = float(np.dot(vec_cur, vec_in) / ((np.linalg.norm(vec_cur)+1e-9)*(np.linalg.norm(vec_in)+1e-9)))
+            print(f"[{self.id}] cosine check vs {msg.agent_id}: cos={cos:.4f}", flush=True)
+            if cos < float(getattr(self.cfg, "cos_gate_thresh", 0.2)):
+                print(f"[{self.id}] DROPPED delta from {msg.agent_id} (cos={cos:.4f} < {self.cfg.cos_gate_thresh})", flush=True)
+                try:
+                    self.monitor.log_edge(self.t_round, msg.agent_id, self.id, msg.bytes_size,
+                                        'head', 'drop_cos', cos, f"cos<{self.cfg.cos_gate_thresh}")
+                except Exception:
+                    pass
+                self.phero.deposit(msg.agent_id, 0.0, max(1, msg.bytes_size), reputation_badness=1.0)
+                return
+
+            # buffer for aggregation (+ log with cos value)
             async with self._inbuf_lock:
                 self._incoming_heads.append((msg.agent_id, vec_in, msg.bytes_size))
-                print(f"[{self.id}] BUFFERED delta from {msg.agent_id} (total buffered={len(self._incoming_heads)})", flush=True)
+            try:
+                self.monitor.log_edge(self.t_round, msg.agent_id, self.id, msg.bytes_size,
+                                    'head', 'buffered', cos, '')
+            except Exception:
+                pass
             return
 
-        # PROTO payload
-        elif msg.payload.get("kind") == "proto":
+        # ============== PROTO payload ==============
+        if msg.payload.get("kind") == "proto":
             try:
                 arr = np.load(io.BytesIO(msg.payload["npz"]), allow_pickle=False)
                 protos = {"kind": "proto", "prototypes": {}}
                 for k in arr.files:
-                    if k == "kind":
-                        continue
+                    if k == "kind": continue
                     cls = k[1:] if k.startswith("c") else k
-                    protos["prototypes"][str(int(cls))] = {
-                        "mean": arr[k].astype(np.float32).tolist(),
-                        "count": 1
-                    }
+                    protos["prototypes"][str(int(cls))] = {"mean": arr[k].astype(np.float32).tolist(), "count": 1}
             except Exception:
                 self.phero.deposit(msg.agent_id, 0.0, max(1, msg.bytes_size), reputation_badness=1.0)
                 return
 
-            # rollback-guarded proto apply
             snap = self._snapshot_head()
             pre  = self._last_eval or self.trainer.eval()
             pre_m = self._get_metric(pre)
@@ -607,15 +616,13 @@ class Agent:
                 self._restore_head(snap)
                 self._last_eval = pre
                 self.phero.deposit(msg.agent_id, 0.0, max(1, msg.bytes_size), reputation_badness=0.7)
-                print(f"[{self.id}] rollback PROTO: {self._primary_metric_name()} "
-                      f"pre={pre_m:.4f} post={post_m:.4f}", flush=True)
+                print(f"[{self.id}] rollback PROTO: {self._primary_metric_name()} pre={pre_m:.4f} post={post_m:.4f}", flush=True)
             else:
                 self._last_eval = post
                 du = min(max(0.0, post_m - pre_m), self.cfg.pheromone.u_max)
                 self.phero.deposit(msg.agent_id, du, max(1, msg.bytes_size), reputation_badness=0.0)
             return
 
-        # unknown payload → ignore
 
     async def _on_hello(self, msg: Hello):
         pass
@@ -734,7 +741,16 @@ class Agent:
                 f"to {aid}@{peer.host}:{peer.port}", flush=True)
             try:
                 await self.node.send(peer.host, peer.port, msg)
+                # telemetry: per-edge send
+                try:
+                    self.monitor.log_edge(self.t_round, self.id, aid, size, payload.get('kind', 'unknown'), 'sent')
+                except Exception:
+                    pass
             except Exception:
+                try:
+                    self.monitor.log_edge(self.t_round, self.id, aid, size, payload.get('kind', 'unknown'), 'send_error')
+                except Exception:
+                    pass
                 pass
 
 

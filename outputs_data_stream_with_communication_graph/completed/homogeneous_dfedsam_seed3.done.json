@@ -1,0 +1,10 @@
+{
+  "exp_name": "homogeneous_dfedsam_seed3",
+  "block": "homogeneous",
+  "label": "",
+  "method": "DFedSAM",
+  "seed": 3,
+  "rounds": 100,
+  "status": "ok",
+  "ts": 1761495985
+}

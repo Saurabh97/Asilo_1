@@ -104,6 +104,13 @@ class FedAvgClientAgent:
             )
             await self.node.send(self._orch_host, self._orch_port, msg)
             self.bytes_sent += size
+
+            # --- telemetry: edge send ---
+            self.monitor.log_edge(
+                t=round_idx, src=self.id, dst=self._orch_id,
+                bytes_sz=size, kind="model", action="send"
+            )
+
             print(f"[{self.id}] SENT local → {self._orch_id}@{self._orch_host}:{self._orch_port} "
                   f"size={size}, norm={np.linalg.norm(weights):.6f}, f1={f1:.4f}, r={round_idx}", flush=True)
 
@@ -131,6 +138,13 @@ class FedAvgClientAgent:
             return
         arr = np.asarray(w, dtype=np.float32)
         self._set_weights(arr)
+
+        # --- telemetry: edge recv from orchestrator ---
+        self.monitor.log_edge(
+            t=msg.t, src=msg.agent_id, dst=self.id,
+            bytes_sz=msg.bytes_size, kind="model", action="recv"
+        )
+
         print(f"[{self.id}] APPLIED agg r={msg.t} (size={arr.size}, norm={np.linalg.norm(arr):.6f})", flush=True)
         # release barrier
         evt = self._agg_events.setdefault(msg.t, asyncio.Event())
@@ -213,6 +227,7 @@ class FedAvgClientAgent:
                 w.copy_(torch.from_numpy(w_new).to(device=w.device, dtype=w.dtype))
                 if b_new is not None:
                     head.bias.copy_(torch.from_numpy(b_new).to(device=w.device, dtype=w.dtype))
+
     # >>> sanity-add
     async def _sanity_probe(self, round_idx: int, f1: float):
         """
@@ -245,12 +260,10 @@ class FedAvgClientAgent:
                 ys, ps = [], []
                 count = 0
                 for batch in val_loader:
-                    # very defensive unpacking
                     if isinstance(batch, (list, tuple)) and len(batch) >= 2:
                         xb, yb = batch[0], batch[1]
                     else:
                         continue
-                    # basic forward
                     try:
                         import torch
                         with torch.no_grad():
@@ -259,7 +272,7 @@ class FedAvgClientAgent:
                             ys.append(yb.cpu().numpy() if hasattr(yb, "cpu") else np.asarray(yb))
                             ps.append(preds)
                             count += len(preds)
-                            if count >= 256:  # small probe
+                            if count >= 256:
                                 break
                     except Exception:
                         break
@@ -311,7 +324,12 @@ class FedAvgOrchestrator:
         self.clients: set[str] = set()
         self.client_endpoints: Dict[str, Tuple[str, int]] = {}
         self._updates_by_round: DefaultDict[int, List[np.ndarray]] = defaultdict(list)
+        self._bytes_by_round: DefaultDict[int, List[int]] = defaultdict(list)  # new: keep sizes for logging
+        self._from_by_round: DefaultDict[int, List[str]] = defaultdict(list)   # new: who sent which vector
         self.current_global: Optional[np.ndarray] = None
+
+        exp_name = os.environ.get("EXP_NAME", "fedavg")
+        self.monitor = CSVMonitor(cfg.agent_id, exp_name)
 
         # routes
         self.node.route("ModelDeltaMsg", self._on_model_delta)
@@ -339,6 +357,9 @@ class FedAvgOrchestrator:
 
         # aggregate
         updates = self._updates_by_round.pop(round_idx, [])
+        bytes_list = self._bytes_by_round.pop(round_idx, [])
+        from_list = self._from_by_round.pop(round_idx, [])
+
         if updates:
             stack = np.stack(updates, axis=0)
             norms = [float(np.linalg.norm(u)) for u in stack]
@@ -349,6 +370,25 @@ class FedAvgOrchestrator:
             prev_norm = float(np.linalg.norm(self.current_global)) if self.current_global is not None else 0.0
             self.current_global = agg
             print(f"[{self.id}] AGG r={round_idx} mean_norm={agg_norm:.6f} (prev={prev_norm:.6f})", flush=True)
+
+            # --- telemetry: aggregation decisions (no trimming in plain FedAvg, mark as keep) ---
+            def _cos(a: np.ndarray, b: np.ndarray) -> float:
+                na = float(np.linalg.norm(a)) + 1e-12
+                nb = float(np.linalg.norm(b)) + 1e-12
+                return float(np.dot(a, b) / (na * nb))
+
+            for u, src, bsz in zip(updates, from_list, bytes_list):
+                cos_sim = _cos(u, agg)
+                # record the decision (we keep all; this is diagnostic)
+                self.monitor.log_agg_decision(
+                    t=round_idx, agent=self.id, from_id=src, bytes_sz=bsz,
+                    decision="keep", cos_thresh=0.0, mode="mean", trim_p=0.0, rolled_back=0
+                )
+                # also record the edge 'classification' as a reasoned recv
+                self.monitor.log_edge(
+                    t=round_idx, src=src, dst=self.id, bytes_sz=bsz,
+                    kind="model", action="used", cos=cos_sim, reason="included_in_mean"
+                )
 
             # broadcast global
             payload = {"weights": self.current_global.tolist()}
@@ -362,6 +402,11 @@ class FedAvgOrchestrator:
                     print(f"[{self.id}] WARN missing endpoint for {cid}; skip", flush=True)
                     continue
                 await self.node.send(host, port, bmsg)
+                # --- telemetry: edge send (broadcast) ---
+                self.monitor.log_edge(
+                    t=round_idx, src=self.id, dst=cid, bytes_sz=bmsg.bytes_size,
+                    kind="model", action="send"
+                )
                 print(f"[{self.id}] BROADCAST agg → {cid}@{host}:{port} "
                       f"size={bmsg.bytes_size}, norm={agg_norm:.6f}, r={round_idx}", flush=True)
         else:
@@ -381,6 +426,15 @@ class FedAvgOrchestrator:
             return
         arr = np.asarray(w, dtype=np.float32)
         self._updates_by_round[msg.t].append(arr)
+        self._bytes_by_round[msg.t].append(int(msg.bytes_size or 0))
+        self._from_by_round[msg.t].append(msg.agent_id)
+
+        # --- telemetry: edge recv ---
+        self.monitor.log_edge(
+            t=msg.t, src=msg.agent_id, dst=self.id, bytes_sz=msg.bytes_size,
+            kind="model", action="recv"
+        )
+
         print(f"[{self.id}] RECV local r={msg.t} from {msg.agent_id} "
               f"(size={arr.size}, norm={np.linalg.norm(arr):.6f}, "
               f"count={len(self._updates_by_round[msg.t])})", flush=True)
@@ -388,8 +442,6 @@ class FedAvgOrchestrator:
     async def _on_join(self, msg: Join):
         self.clients.add(msg.agent_id)
         self.client_endpoints[msg.agent_id] = (msg.host, msg.port)
-        # You can choose to send a Welcome; clients don't require it, but it's OK.
         await self.node.send(msg.host, msg.port, Welcome(peers=[(self.id, self.cfg.host, self.cfg.port, "orchestrator")]))
         print(f"[{self.id}] JOIN {msg.agent_id} endpoint={self.client_endpoints[msg.agent_id]} "
               f"clients={sorted(self.clients)}", flush=True)
-        

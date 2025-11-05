@@ -129,7 +129,7 @@ async def main(cfg_path: str):
     # exp name
     _exp = known.exp if known.exp is not None else "fedavg_orch"
     if _seed is not None:
-        _exp = f"{_exp}_seed{_seed}"
+        _exp = f"{_exp}"
     os.environ["EXP_NAME"] = _exp
 
     # discover orchestrator

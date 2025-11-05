@@ -52,7 +52,7 @@ def parse_csv_numeric(path):
     try:
         df = pd.read_csv(path)
         cols = {c.lower(): c for c in df.columns}
-        round_col = cols.get("round") or cols.get("r") or list(df.columns)[0]
+        round_col = cols.get("round") or cols.get("r")or cols.get("t") or list(df.columns)[0]
         f1_col = cols.get("f1") or cols.get("f1_val") or cols.get("macro_f1") or None
         return df, round_col, f1_col
     except Exception:
@@ -329,8 +329,11 @@ def run_parallel(repo_root, tasks, max_parallel=4, max_parallel_gpu=1,
 
 # -------------------- Aggregation --------------------
 def aggregate_roundwise(repo_root, run_index_json, out_csv):
+    import json, re, sys
+    from pathlib import Path
     import pandas as pd
     import numpy as np
+
     with open(run_index_json, "r", encoding="utf-8") as f:
         runs = json.load(f)
 
@@ -341,57 +344,95 @@ def aggregate_roundwise(repo_root, run_index_json, out_csv):
         if not files:
             print(f"[WARN] No logs found for {exp}", file=sys.stderr)
             continue
+
         per_agent = []
+        used_names = set()
+
         for fp in files:
             df_or_dict, rcol, fcol = parse_csv_numeric(fp)
+
+            # --- Build a normalized (round, f1_val) DataFrame ---
             if isinstance(df_or_dict, dict):
-                import pandas as pd
-                df_tmp = pd.DataFrame({"round": df_or_dict["rounds"], "f1": df_or_dict["f1"]})
-                per_agent.append(df_tmp)
+                # accept either 'f1_val' or legacy 'f1' from dict path
+                rounds = df_or_dict.get("rounds")
+                fvals  = df_or_dict.get("f1_val", df_or_dict.get("f1"))
+                if rounds is None or fvals is None:
+                    continue
+                df = pd.DataFrame({"round": rounds, "f1_val": fvals})
             else:
                 df = df_or_dict
                 if fcol is None:
                     continue
-                per_agent.append(df[[rcol, fcol]].rename(columns={rcol: "round", fcol: "f1"}))
+                df = df[[rcol, fcol]].rename(columns={rcol: "round", fcol: "f1_val"})
+
+            # --- Clean & dedupe rounds ---
+            df["round"] = pd.to_numeric(df["round"], errors="coerce")
+            df = df.dropna(subset=["round"])
+            df["round"] = df["round"].astype(int)
+            df = df.drop_duplicates(subset=["round"])
+
+            if df.empty:
+                continue
+
+            # --- Give each agent/subject a unique metric column name ---
+            # Infer subject id from filename like S2/S02/etc; fallback to stem
+            s = re.search(r"(S\d+)", str(fp))
+            sid = s.group(1) if s else Path(str(fp)).stem
+            base = f"f1_val_{sid}"
+            col_name = base
+            i = 2
+            while col_name in used_names:
+                col_name = f"{base}_{i}"
+                i += 1
+            used_names.add(col_name)
+
+            df = df.rename(columns={"f1_val": col_name})
+            per_agent.append(df.set_index("round"))
 
         if not per_agent:
             continue
 
-        df_all = None
-        for item in per_agent:
-            df_all = item if df_all is None else df_all.merge(item, on="round", how="outer")
+        # --- Safe alignment: concat side-by-side on index=round ---
+        df_all = pd.concat(per_agent, axis=1).sort_index()
 
         if df_all is None or df_all.empty:
             continue
 
-        f_cols = [c for c in df_all.columns if c != "round"]
-        df_all["f1_mean_run"] = df_all[f_cols].mean(axis=1, skipna=True)
+        f_cols = [c for c in df_all.columns if c.startswith("f1_val_")]
+        df_all["f1_val_mean_run"] = df_all[f_cols].mean(axis=1, skipna=True)
+        df_all = df_all.reset_index()  # bring 'round' back as a column
 
         for _, row in df_all.iterrows():
-            if row["f1_mean_run"] == row["f1_mean_run"]:
+            val = row["f1_val_mean_run"]
+            if pd.notna(val):
                 rows.append({
-                    "block": r.get("block"), "label": r.get("label"), "method": r.get("method"),
-                    "seed": r.get("seed"), "round": int(row["round"]), "f1_run": float(row["f1_mean_run"])
+                    "block": r.get("block"),
+                    "label": r.get("label"),
+                    "method": r.get("method"),
+                    "seed":   r.get("seed"),
+                    "round":  int(row["round"]),
+                    "f1_run": float(val)
                 })
 
     if not rows:
         print("[WARN] No data to aggregate.", file=sys.stderr)
         return
 
-    import pandas as pd
-    import numpy as np
     df = pd.DataFrame(rows).dropna(subset=["f1_run"])
     stats = []
-    for (b, l, m, rr), grp in df.groupby(["block","label","method","round"]):
+    for (b, l, m, rr), grp in df.groupby(["block", "label", "method", "round"]):
         vals = grp["f1_run"].values
         mu = float(np.mean(vals))
         sd = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
         sem = sd / (len(vals) ** 0.5) if len(vals) > 1 else 0.0
-        ci_low = mu - 1.96 * sem
-        ci_high = mu + 1.96 * sem
-        stats.append({"block":b,"label":l,"method":m,"round":rr,
-                      "f1_mean":mu,"f1_std":sd,"f1_sem":sem,"ci_low":ci_low,"ci_high":ci_high,"n":len(vals)})
-    df_stats = pd.DataFrame(stats).sort_values(["block","label","method","round"])
+        ci_low, ci_high = mu - 1.96 * sem, mu + 1.96 * sem
+        stats.append({
+            "block": b, "label": l, "method": m, "round": rr,
+            "f1_mean": mu, "f1_std": sd, "f1_sem": sem,
+            "ci_low": ci_low, "ci_high": ci_high, "n": len(vals)
+        })
+
+    df_stats = pd.DataFrame(stats).sort_values(["block", "label", "method", "round"])
     Path(out_csv).parent.mkdir(parents=True, exist_ok=True)
     df_stats.to_csv(out_csv, index=False)
     print(f"[OK] Wrote aggregated stats: {out_csv}")

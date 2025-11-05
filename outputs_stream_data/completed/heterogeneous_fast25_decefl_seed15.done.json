@@ -1,0 +1,10 @@
+{
+  "exp_name": "heterogeneous_fast25_decefl_seed15",
+  "block": "heterogeneous",
+  "label": "fast25",
+  "method": "DeceFL",
+  "seed": 15,
+  "rounds": 50,
+  "status": "ok",
+  "ts": 1761318376
+}

@@ -120,7 +120,7 @@ async def main(cfg_path: str):
 
     # experiment name
     exp = known.exp if known.exp is not None else "dfedsam_orch"
-    if seed is not None: exp = f"{exp}_seed{seed}"
+    if seed is not None: exp = f"{exp}"
     os.environ["EXP_NAME"] = exp
 
     # orchestrator config

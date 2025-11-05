@@ -26,6 +26,9 @@ class DeceFLConfig:
     is_server: bool = False
     exp_name: str = "decefl"
     agg_mode: str = "weighted"   # "weighted" (mean) or "median"
+    # --- NEW: optional gating / trimming knobs (can be wired from YAML later) ---
+    cos_gate_thresh: float = float("nan")  # NaN → disabled; else keep only if cos >= thresh
+    trim_p: float = 0.0                    # 0.0 → no trimming; else [0..0.49] trim at both tails
 
 def coord_median(stack: np.ndarray) -> np.ndarray:
     return np.median(stack, axis=0)
@@ -37,11 +40,17 @@ def weighted_mean(stack: np.ndarray, w: np.ndarray | None = None) -> np.ndarray:
     w = w / (np.sum(w) + 1e-12)
     return (stack * w[:, None]).sum(axis=0)
 
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    an = np.linalg.norm(a); bn = np.linalg.norm(b)
+    if an == 0.0 or bn == 0.0: return 0.0
+    return float(np.dot(a, b) / (an * bn))
+
 class DeceFLAgent:
     """
-    Decentralized, round-synchronous DeceFL:
-    - Orchestrator calls run_one_round() each round (no internal while-loop).
-    - Each round: local fit -> send to K peers -> bounded wait -> aggregate only same-round messages.
+    Decentralized, round-synchronous DeceFL with telemetry:
+    - Orchestrator calls run_one_round() (no internal while-loop).
+    - Each round: local fit -> send to K peers (log_edge: send) ->
+      wait -> receive (log_edge: recv) -> classify each delta (log_agg_decision) -> aggregate kept deltas only.
     - Inbox bucketed by msg.t to avoid cross-round mixing.
     """
     def __init__(self, cfg: DeceFLConfig, trainer: LocalTrainer, role: str, peers: Dict[str, Tuple[str,int]]):
@@ -53,12 +62,13 @@ class DeceFLAgent:
         self.is_server = cfg.is_server
         self.monitor = CSVMonitor(cfg.agent_id, exp_name=cfg.exp_name)
 
+        # peers: top-K neighborhood (id -> (host,port))
         self.peers: Dict[str, Tuple[str,int]] = peers
         self.round = 0
         self.bytes_sent = 0
 
-        # round_id -> List[np.ndarray]
-        self.inbox: Dict[int, List[np.ndarray]] = {}
+        # inbox: round_id -> List[Tuple[from_id, vec, bytes]]
+        self.inbox: Dict[int, List[Tuple[str, np.ndarray, int]]] = {}
 
         self.node.route("ModelDeltaMsg", self._on_model_delta)
         self.node.route("Join", self._on_join)
@@ -66,9 +76,9 @@ class DeceFLAgent:
 
     async def start(self):
         await self.node.start()
-        # lightweight handshake
+        # handshake
         j = Join(agent_id=self.id, host=self.cfg.host, port=self.cfg.port, capability="DeceFL")
-        for _, (h, p) in self.peers.items():
+        for pid, (h, p) in self.peers.items():
             await self.node.send(h, p, j)
 
     async def shutdown(self):
@@ -79,61 +89,125 @@ class DeceFLAgent:
         """Deprecated: kept for compatibility; no loop here."""
         await self.start()
 
-    # --- inside class DeceFLAgent ---
-
     def _desired_min_incoming(self) -> int:
-        # OLD: return max(1, min(len(self.peers), (len(self.peers)+1)//2))
-        # NEW: aim to use ALL available neighbors this round
+        # Aim to use ALL available neighbors this round (K/K if they arrive in time)
         return max(1, len(self.peers))
 
     async def run_one_round(self, local_epochs: int = 5, wait_timeout_s: float = 1.0, grace_s: float = 0.15):
         t0 = time.time()
 
+        # 1) Local step
         self.trainer.fit_local(local_epochs)
         metrics = self.trainer.eval()
 
+        # 2) Send head to peers (+ edge log)
         weights, size = self._get_weights()
         if weights is not None and self.peers:
             payload = {"weights": weights.tolist()}
             msg = ModelDeltaMsg(agent_id=self.id, t=self.round, model_id=self.cfg.model_id,
                                 strategy="decefl", payload=payload, bytes_size=int(size))
-            for _, (h, p) in self.peers.items():
+            for pid, (h, p) in self.peers.items():
                 await self.node.send(h, p, msg)
                 self.bytes_sent += int(size)
+                # ---- log edge: SEND ----
+                self.monitor.log_edge(t=self.round, src=self.id, dst=pid, bytes_sz=int(size),
+                                      kind="model", action="send", cos=None, reason="head")
             print(f"[{self.id}] SENT r={self.round} -> K={len(self.peers)} size={size} norm={np.linalg.norm(weights):.6f}", flush=True)
 
-        # Wait for ALL peers or until timeout
+        # 3) Wait for ALL peers or until timeout + small grace to catch stragglers
         target = self._desired_min_incoming()
         await self._await_round_updates(self.round, min_count=target, timeout_s=wait_timeout_s)
-
-        # Grace window to catch stragglers
         if grace_s > 0:
             await asyncio.sleep(grace_s)
 
-        # Aggregate what we have for THIS round
+        # 4) Aggregate THIS round with per-delta decisions
         buf = self.inbox.pop(self.round, [])
         got = len(buf)
         k = len(self.peers)
-        late_key = f"_late_drop_r{self.round}"
-        late = len(self.inbox.get(self.round, []))  # anything that slipped in during merge prints
+
         if got == 0:
             print(f"[{self.id}] WARN: no peer updates for r={self.round}", flush=True)
         else:
-            stack = np.stack(buf, axis=0)
-            agg = coord_median(stack) if self.cfg.agg_mode.lower() == "median" else weighted_mean(stack)
+            # classify each received delta vs. current head (before aggregation)
             before_vec, _ = self._get_weights()
-            self._set_weights(agg)
-            after_vec, _ = self._get_weights()
-            norms = [float(np.linalg.norm(u)) for u in buf]
-            print(f"[{self.id}] AGG r={self.round} n={got}/{k} norms={norms} mode={self.cfg.agg_mode} before={before_vec} after={after_vec}", flush=True)
-            if late:
-                # make it explicit that we are dropping stale messages for this round
-                print(f"[{self.id}] NOTE: dropping {late} late arrivals for r={self.round}", flush=True)
-                self.inbox.pop(self.round, None)
+            kept: List[np.ndarray] = []
+            late = len(self.inbox.get(self.round, []))  # anything that snuck in after pop
 
+            for from_id, vec, bsz in buf:
+                cos = _cosine(before_vec, vec) if (before_vec is not None and vec is not None) else 0.0
+                keep = True
+                reason = "ok"
+
+                # cosine gating if enabled (threshold is a number, not NaN)
+                if not np.isnan(self.cfg.cos_gate_thresh):
+                    if cos < float(self.cfg.cos_gate_thresh):
+                        keep = False
+                        reason = f"cos<{self.cfg.cos_gate_thresh}"
+
+                # log per-delta decision
+                self.monitor.log_agg_decision(
+                    t=self.round, agent=self.id, from_id=from_id, bytes_sz=int(bsz),
+                    decision=("keep" if keep else "drop"),
+                    cos_thresh=float(self.cfg.cos_gate_thresh) if not np.isnan(self.cfg.cos_gate_thresh) else float("nan"),
+                    mode=self.cfg.agg_mode, trim_p=float(self.cfg.trim_p), rolled_back=0
+                )
+                # also mirror to edges.csv with the cosine observed on receive path
+                # (denote the decision in "reason")
+                self.monitor.log_edge(
+                    t=self.round, src=from_id, dst=self.id, bytes_sz=int(bsz),
+                    kind="model", action=("recv_keep" if keep else "recv_drop"),
+                    cos=cos, reason=reason
+                )
+
+                if keep:
+                    kept.append(vec)
+
+            # optional trimming (if user later sets trim_p>0)
+            stack = None
+            if kept:
+                stack = np.stack(kept, axis=0)
+                if 0.0 < self.cfg.trim_p < 0.5:
+                    m = stack.shape[0]
+                    if m >= 3:
+                        # trim equally at both tails by L2 norm rank
+                        norms = np.linalg.norm(stack, axis=1)
+                        order = np.argsort(norms)
+                        trim = int(np.floor(self.cfg.trim_p * m))
+                        sel = order[trim: m - trim] if (m - 2*trim) >= 1 else order
+                        stack = stack[sel]
+
+            if stack is not None and stack.size > 0:
+                agg = coord_median(stack) if self.cfg.agg_mode.lower() == "median" else weighted_mean(stack)
+                before_norm = np.linalg.norm(before_vec) if before_vec is not None else 0.0
+                self._set_weights(agg)
+                after_vec, _ = self._get_weights()
+                after_norm = np.linalg.norm(after_vec) if after_vec is not None else 0.0
+                delta_norm = (np.linalg.norm(after_vec - before_vec)
+                              if (before_vec is not None and after_vec is not None) else 0.0)
+                kept_norms = [float(np.linalg.norm(u)) for u in kept]
+                print(f"[{self.id}] AGG r={self.round} kept={len(kept)}/{got} of K={k} "
+                      f"norms={kept_norms} mode={self.cfg.agg_mode} Δ={delta_norm:.6f}", flush=True)
+            else:
+                print(f"[{self.id}] AGG r={self.round} kept=0/{got} of K={k} → skip apply", flush=True)
+
+            # late arrivals after grace → mark explicitly
+            if late:
+                # re-check and purge any lingering entries for this round
+                extra = self.inbox.pop(self.round, [])
+                for from_id, vec, bsz in extra:
+                    self.monitor.log_agg_decision(
+                        t=self.round, agent=self.id, from_id=from_id, bytes_sz=int(bsz),
+                        decision="late_drop",
+                        cos_thresh=float(self.cfg.cos_gate_thresh) if not np.isnan(self.cfg.cos_gate_thresh) else float("nan"),
+                        mode=self.cfg.agg_mode, trim_p=float(self.cfg.trim_p), rolled_back=0
+                    )
+                print(f"[{self.id}] NOTE: dropping {len(extra)} late arrivals for r={self.round}", flush=True)
+
+        # 5) Per-round metrics & advance
         self.monitor.log(self.round, self.bytes_sent, 0.0, 0.0, metrics.get("f1_val", 0.0))
         self.round += 1
 
+        # 6) Pacing
         dt = self.cfg.round_time_s - (time.time() - t0)
         if dt > 0: await asyncio.sleep(dt)
 
@@ -144,7 +218,6 @@ class DeceFLAgent:
                 break
             await asyncio.sleep(0.01)
 
-
     # ---------- handlers ---------- #
     async def _on_model_delta(self, msg: ModelDeltaMsg):
         r = int(getattr(msg, "t", -1))
@@ -152,7 +225,11 @@ class DeceFLAgent:
         if w is None or r < 0:
             return
         arr = np.asarray(w, dtype=np.float32)
-        self.inbox.setdefault(r, []).append(arr)
+        bsz = int(getattr(msg, "bytes_size", 0) or 0)
+        self.inbox.setdefault(r, []).append((msg.agent_id, arr, bsz))
+        # ---- log edge: RECV (raw arrival; final keep/drop is decided at agg time) ----
+        self.monitor.log_edge(t=r, src=msg.agent_id, dst=self.id, bytes_sz=bsz,
+                              kind="model", action="recv", cos=None, reason=None)
         print(f"[{self.id}] RECEIVED from {msg.agent_id} r={r} size={arr.size} norm={np.linalg.norm(arr):.6f} (buf_r={len(self.inbox[r])})", flush=True)
 
     async def _on_join(self, msg: Join):
@@ -182,7 +259,7 @@ class DeceFLAgent:
             if isinstance(m, nn.Sequential):
                 last = None
                 for sub in m.modules():
-                    if isinstance(sub, nn.Linear): last = sub
+                    if isinstance(m, nn.Linear): last = sub
                 if last is not None: return last
         last = None
         for m in getattr(model, "modules", lambda: [])():
