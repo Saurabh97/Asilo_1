@@ -274,8 +274,9 @@ def _cond_key(lbl: str) -> str:
     Canonicalize condition labels to one of:
       - 'homogeneous'
       - 'heterogeneous-fast25'
-      - 'heterogeneous-fast40'
       - 'heterogeneous-fast50'
+      - 'heterogeneous-fast75'
+      - 'heterogeneous-fast100'
       - 'heterogeneous' (fallback when hetero but no fast bucket found)
     Also recognizes short forms like 'fast25', 'fast40', 'fast50'.
     """
@@ -289,17 +290,21 @@ def _cond_key(lbl: str) -> str:
     if 'hetero' in s or 'heterogeneous' in s:
         if ('fast' in s and '25' in s) or 'f25' in s or s.endswith('fast-25'):
             return 'heterogeneous-fast25'
-        if ('fast' in s and '40' in s) or 'f40' in s or s.endswith('fast-40'):
-            return 'heterogeneous-fast40'
         if ('fast' in s and '50' in s) or 'f50' in s or s.endswith('fast-50'):
             return 'heterogeneous-fast50'
+        if ('fast' in s and '75' in s) or 'f75' in s or s.endswith('fast-75'):
+            return 'heterogeneous-fast75'
+        if ('fast' in s and '100' in s) or 'f100' in s or s.endswith('fast-100'):
+            return 'heterogeneous-fast100'
         return 'heterogeneous'
     if ('fast' in s and '25' in s) or s.endswith('fast25'):
         return 'heterogeneous-fast25'
-    if ('fast' in s and '40' in s) or s.endswith('fast40'):
-        return 'heterogeneous-fast40'
     if ('fast' in s and '50' in s) or s.endswith('fast50'):
         return 'heterogeneous-fast50'
+    if ('fast' in s and '75' in s) or s.endswith('fast75'):
+        return 'heterogeneous-fast75'
+    if ('fast' in s and '100' in s) or s.endswith('fast100'):
+        return 'heterogeneous-fast100'
     return 'homogeneous' if s == '' else s
 
 def _smooth(y, w=3):
@@ -457,8 +462,9 @@ def plot_asilo_vs_bases_by_condition(df_stats, out_dir: Path, base_methods):
     targets = [
         ('homogeneous',          'f1_asilo_vs_bases_homogeneous.png',   'Homogeneous'),
         ('heterogeneous-fast25', 'f1_asilo_vs_bases_fast25.png',        'Heterogeneous — Fast 25'),
-        ('heterogeneous-fast40', 'f1_asilo_vs_bases_fast40.png',        'Heterogeneous — Fast 40'),
         ('heterogeneous-fast50', 'f1_asilo_vs_bases_fast50.png',        'Heterogeneous — Fast 50'),
+        ('heterogeneous-fast75', 'f1_asilo_vs_bases_fast75.png',        'Heterogeneous — Fast 75'),
+        ('heterogeneous-fast100', 'f1_asilo_vs_bases_fast100.png',      'Heterogeneous — Fast 100'),
     ]
 
     def _series_for_method(gdf, method: str):
