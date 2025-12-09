@@ -10,20 +10,23 @@ SECS = [
     ("f1_mean_ci_timeseries_DeceFL","f1_mean_ci_timeseries_DeceFL.png"),
     ("f1_mean_ci_timeseries_DFedSAM","f1_mean_ci_timeseries_DFedSAM.png"),
     ("f1_asilo_vs_bases_homogeneous","f1_asilo_vs_bases_homogeneous.png"),
-    ("f1_asilo_vs_bases_fast50","f1_asilo_vs_bases_fast50.png"),
     ("f1_asilo_vs_bases_fast25","f1_asilo_vs_bases_fast25.png"),
+    ("f1_asilo_vs_bases_fast50","f1_asilo_vs_bases_fast50.png"),
+    ("f1_asilo_vs_bases_fast75","f1_asilo_vs_bases_fast75.png"),
+    ("f1_asilo_vs_bases_fast100","f1_asilo_vs_bases_fast100.png"),
     ("F1 across rounds", "f1_mean_ci_timeseries.png"),
     ("F1 vs Normalized Communication", "f1_vs_normalized_communication.png"),
     ("Pheromone decay", "pheromone_decay_timeseries.png"),
 ]
 
 METHODS = ["ASILO", "FedAvg", "DFedSAM", "DeceFL"]
-COND_KEYS = ["homogeneous", "heterogeneous-fast25", "heterogeneous-fast40", "heterogeneous-fast50"]
+COND_KEYS = ["homogeneous", "heterogeneous-fast25", "heterogeneous-fast50", "heterogeneous-fast75", "heterogeneous-fast100"]
 COND_DISPLAY = {
     "homogeneous": "homogeneous",
     "heterogeneous-fast25": "fast25",
-    "heterogeneous-fast40": "fast40",
     "heterogeneous-fast50": "fast50",
+    "heterogeneous-fast75": "fast75",
+    "heterogeneous-fast100": "fast100",
 }
 
 def _img_b64(path: Path) -> str:
@@ -107,7 +110,7 @@ def _summarize_edge_stats(comms_dir: Path) -> pd.DataFrame:
         return pd.DataFrame(columns=["method","condition","edges","sent_events","recv_events","total_bytes"])
     out = pd.DataFrame(rows)
     # Order nicely
-    cat_cond = ["homogeneous","fast25","fast40","fast50"]
+    cat_cond = ["homogeneous","fast25","fast50","fast75","fast100"]
     out["condition"] = pd.Categorical(out["condition"], categories=cat_cond, ordered=True)
     out = out.sort_values(["method","condition"])
     return out
@@ -134,8 +137,10 @@ def main():
             return "fast25"
         if "fast50" in s or (("fast" in s) and ("50" in s)):
             return "fast50"
-        if "fast40" in s or (("fast" in s) and ("40" in s)):
-            return "fast40"
+        if "fast75" in s or (("fast" in s) and ("75" in s)):
+            return "fast75" 
+        if "fast100" in s or (("fast" in s) and ("100" in s)):
+            return "fast100"
         return str(v)
 
     df["label_norm"] = df["label"].map(_label_display)
@@ -147,7 +152,7 @@ def main():
           .reset_index(drop=True)
     )
 
-    cat_order = ["homogeneous", "fast25", "fast40", "fast50"]
+    cat_order = ["homogeneous", "fast25", "fast50", "fast75", "fast100"]
     last["label_norm"] = pd.Categorical(last["label_norm"], categories=cat_order, ordered=True)
 
     tbl = last[[
