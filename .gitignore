@@ -1,0 +1,4 @@
+# Any folder in the repo root starting with these names
+**/data*/
+**/outputs*/
+**/logs*/
