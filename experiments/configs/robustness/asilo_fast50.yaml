@@ -36,7 +36,7 @@ trigger:
 
 capabilities:
   FAST: { width: 1.0, local_batches: 10, k_peers: 1, max_bytes_round: 655360 }
-  SLOW: { width: 0.5, local_batches: 6,  k_peers: 1, max_bytes_round: 655360 }
+  SLOW: { width: 0.5, local_batches: 5,  k_peers: 1, max_bytes_round: 655360 }
 
 # NOTE: Phase 1 keeps explicit assignments.
 # Phase 2 will programmatically assign fast/slow by fast_ratio.

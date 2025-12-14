@@ -1,5 +1,5 @@
 seed: 7
-round_time_s: 0.1
+round_time_s: 0.20
 
 ttl_seconds: 35
 u_eps: 0.000
@@ -41,20 +41,20 @@ capabilities:
 # NOTE: Phase 1 keeps explicit assignments.
 # Phase 2 will programmatically assign fast/slow by fast_ratio.
 agents:
-  - { id: S2, host: 127.0.0.1, port: 9002, model_id: wear, capability: SLOW }
-  - { id: S3, host: 127.0.0.1, port: 9003, model_id: wear, capability: FAST }
-  - { id: S4, host: 127.0.0.1, port: 9004, model_id: wear, capability: SLOW }
+  - { id: S2, host: 127.0.0.1, port: 9002, model_id: wear, capability: FAST }
+  - { id: S3, host: 127.0.0.1, port: 9003, model_id: wear, capability: SLOW }
+  - { id: S4, host: 127.0.0.1, port: 9004, model_id: wear, capability: FAST }
   - { id: S5, host: 127.0.0.1, port: 9005, model_id: wear, capability: FAST }
-  - { id: S6, host: 127.0.0.1, port: 9007, model_id: wear, capability: SLOW }
+  - { id: S6, host: 127.0.0.1, port: 9007, model_id: wear, capability: FAST }
   - { id: S7, host: 127.0.0.1, port: 9008, model_id: wear, capability: FAST }
-  - { id: S8, host: 127.0.0.1, port: 9009, model_id: wear, capability: SLOW }
-  - { id: S9, host: 127.0.0.1, port: 9010, model_id: wear, capability: FAST }
-  - { id: S10, host: 127.0.0.1, port: 9011, model_id: wear, capability: SLOW }
-  - { id: S11, host: 127.0.0.1, port: 9012, model_id: wear, capability: SLOW }
-  - { id: S13, host: 127.0.0.1, port: 9013, model_id: wear, capability: SLOW }
-  - { id: S14, host: 127.0.0.1, port: 9014, model_id: wear, capability: SLOW }
-  - { id: S15, host: 127.0.0.1, port: 9015, model_id: wear, capability: SLOW }
+  - { id: S8, host: 127.0.0.1, port: 9009, model_id: wear, capability: FAST }
+  - { id: S9, host: 127.0.0.1, port: 9010, model_id: wear, capability: SLOW }
+  - { id: S10, host: 127.0.0.1, port: 9011, model_id: wear, capability: FAST }
+  - { id: S11, host: 127.0.0.1, port: 9012, model_id: wear, capability: FAST }
+  - { id: S13, host: 127.0.0.1, port: 9013, model_id: wear, capability: FAST }
+  - { id: S14, host: 127.0.0.1, port: 9014, model_id: wear, capability: FAST }
+  - { id: S15, host: 127.0.0.1, port: 9015, model_id: wear, capability: FAST }
   - { id: S16, host: 127.0.0.1, port: 9016, model_id: wear, capability: SLOW }
-  - { id: S17, host: 127.0.0.1, port: 9017, model_id: wear, capability: SLOW }
+  - { id: S17, host: 127.0.0.1, port: 9017, model_id: wear, capability: FAST}
 
 data_dir: data/processed/Processed_Wrist_LSTM/

@@ -1,4 +1,9 @@
-# Any folder in the repo root starting with these names
+# generated data / results (anywhere)
 **/data*/
 **/outputs*/
 **/logs*/
+**/artifacts*/
+
+# python cache
+**/__pycache__/
+*.pyc

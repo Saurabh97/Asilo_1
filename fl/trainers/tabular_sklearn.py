@@ -60,9 +60,9 @@ def _load_split_csvs(data_dir: str, subject_id: str) -> Tuple[np.ndarray, np.nda
     X_val = val_df[feature_cols].values.astype(np.float32)
     y_val = val_df[label_col].values.astype(int)
 
-    # Map labels [1–4] -> [0–3]
-    y_train -= 1
-    y_val   -= 1
+    ## Map labels [1–4] -> [0–3]
+    #y_train -= 1
+    #y_val   -= 1
 
     # -------- windowing helpers --------
     def make_sequences(X, y, window_len=10, stride=10, label_mode="majority"):
@@ -202,7 +202,7 @@ class StreamedLSTMTrainer(LocalTrainer):
         self.y_val = torch.tensor(yv, dtype=torch.long).to(self.device)
 
         input_dim = self.X_train.shape[2]
-        num_classes = 4  # Fixed for WESAD (labels 0–3)
+        num_classes = 2  # Fixed for WESAD (labels 0–1)
 
         self.model = LSTMModel(input_dim, hidden_dim=hidden_dim, num_classes=num_classes).to(self.device)
         self.opt = optim.Adam(self.model.parameters(), lr=lr)
