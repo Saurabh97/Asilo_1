@@ -4,7 +4,7 @@ ASILO — Wearables Demo (v0.1)
 
 Goal
 ----
-Minimal end-to-end demo of the **original proposal**: fully decentralized FL with
+End-to-end demo of the **original proposal**: fully decentralized FL with
 **pheromone** (utility) driven neighbor selection, **capability-aware** policies,
 and **sparse delta** sharing — applied to a *wearables stress detection* case.
 
