@@ -1,42 +1,88 @@
-"""
-ASILO — Wearables Demo (v0.1)
-=============================
+# ASILO — Adaptive Swarm-Inspired Local Optimisation (Fully Decentralized FL)
 
-Goal
-----
-End-to-end demo of the **original proposal**: fully decentralized FL with
-**pheromone** (utility) driven neighbor selection, **capability-aware** policies,
-and **sparse delta** sharing — applied to a *wearables stress detection* case.
+Prototype + experiments for **fully decentralized federated learning (no central server)** on **non-IID** and **heterogeneous** clients, with a focus on **communication efficiency**, **robustness**, and **fairness**.
 
-What works in v0.1
-------------------
-- Pure P2P (no central router in hot path). Each agent runs its own TCP server.
-- Pheromone logic tied to *learning utility* (ΔF1/AUPRC proxy on validation).
-- Two delta strategies implemented:
-  1) `head_delta` — for scikit-learn LogisticRegression (coefficients + bias).
-  2) `proto_delta` — class prototypes for embedding spaces or tabular features.
-- Capability-aware policies: local steps, top-k neighbors, byte budgets.
-- Config-driven launcher spawning N agents on one machine.
+Repository (thesis code): https://github.com/Saurabh97/Asilo_1
 
-What this demo assumes
-----------------------
-- You preprocess WESAD wrist data into a CSV with feature columns + label.
-  Path convention: `data/processed/WESAD_wrist/<SUBJECT>.csv`.
-  Each CSV should have columns: `ts,label,feat_0,feat_1,...,feat_D`.
-- If you don't have WESAD ready yet, you can still run agents on synthetic data
-  via `--synthetic` flag inside `experiments/run.py`.
+---
 
-Quick start
------------
-1) Create a venv; install deps: `pip install pyyaml scikit-learn uvloop` (uvloop optional on Linux/Mac).
-2) Preprocess WESAD into `data/processed/WESAD_wrist/` (or toggle synthetic).
-3) Run: `python experiments/run.py experiments/configs/wesad_case.yaml`
-4) Watch logs — each agent prints pheromone, utility, bytes/round.
+## What this project is about
 
-Next steps
-----------
-- Swap LogisticRegression → 1D-TCN for raw windows (add `vision_torch.py`).
-- Add Streamlit dashboard to visualize pheromone heatmap + neighbor graph.
-- Plug real PPG/EDA feature extractor and proper AUPRC computation.
+Fully decentralized FL is hard because:
 
-"""
+- **Non-IID data**: each client has different label distributions and behavior.
+- **Heterogeneous clients**: devices differ in compute budget (local epochs/steps), bandwidth, and reliability.
+- **Communication constraints**: limited fan-out, byte budgets, message drops/buffering.
+- **Fairness**: some clients can dominate the learning while others get ignored.
+
+This repo implements **ASILO** (a swarm-inspired decentralized method) and compares it against multiple baselines.
+
+---
+
+## Key idea of ASILO
+
+ASILO combines:
+
+- **Pheromone-guided peer selection** (learns which neighbors are high-utility)
+- **Capability-aware local optimisation** (clients train according to their own budgets)
+- **Event-triggered / lightweight communication** (communicate when useful)
+- **Robust gating + aggregation** (accept/buffer/drop updates based on similarity/budget/robust rules)
+
+The goal is to improve the **accuracy–communication tradeoff** while maintaining **stability** and **fairness** across clients.
+
+---
+
+## Implemented methods
+
+- **ASILO** — swarm-inspired, decentralized, capability-aware, event-triggered communication
+- **FedAvg** — classic FL baseline adapted to this framework
+- **DeceFL** — peer-based decentralized update exchange
+- **DFedSAM** — decentralized training with **SAM** optimizer support
+
+> Note: configs are designed so that **local compute budget comes from YAML** (e.g., `local_round`, `local_epochs`, or steps-per-round depending on trainer).
+
+---
+
+## Dataset
+
+Experiments target **WESAD (wrist wearable signals)** with:
+- strong **subject-level non-IID**
+- **label imbalance** and varying class coverage across subjects
+- common setups include **binary stress vs non-stress** (depending on preprocessing)
+
+---
+
+## Training pipeline highlights
+
+To make FL rounds realistic and comparable across heterogeneous clients:
+
+- **Round-wise training budget** (fixed steps/epochs per round)
+- **Streaming DataLoader iterator** (no full-epoch loop unless desired)
+- iterator reinitializes on exhaustion (optional reshuffle)
+- optional replay buffer growth for online/streamed data
+- gradient clipping + safe evaluation guards
+
+---
+
+## Configuration (YAML)
+
+Most experiments are driven by YAML configs (example structure):
+
+```yaml
+round_time_s: 0.1
+
+run_limits:
+  max_rounds: 100
+  max_seconds: 1200
+
+agents:
+  - { id: S2, host: 127.0.0.1, port: 9202, local_round: 5,  model_id: wear }
+  - { id: S3, host: 127.0.0.1, port: 9203, local_round: 10, model_id: wear }
+  - { id: S4, host: 127.0.0.1, port: 9204, local_round: 5,  model_id: wear }
+
+# method-specific blocks:
+asilo:
+  k_peers: 3
+  trigger: ...
+  pheromone: ...
+  agg_mode: "robust"
